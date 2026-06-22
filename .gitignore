@@ -1,0 +1,37 @@
+# OS junk
+.DS_Store
+._*
+
+# Logs and archives
+*.log
+*.bak
+*.bak*
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Composer dependencies
+/vendor/
+
+# Sensitive/local env
+/db/*.sql
+/.env
+
+# Runtime storage
+/storage/
+/storage_sql_backup/
+
+# Uploads (keep in production, but don't commit to repo)
+/uploads/
+/upload/
+
+# Private/secrets (do not commit)
+/storage/private/
+/storage/private/*
+
+# Credential docs (private)
+/LOCAL_ADMIN_CREDENTIALS.md
+/storage/private/LOCAL_ADMIN_CREDENTIALS.md
+/storage/private/ROTATE_ADMIN_PASSWORD_INSTRUCTIONS.md
