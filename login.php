@@ -74,6 +74,27 @@ function require_post_with_csrf(){ if($_SERVER['REQUEST_METHOD']!=='POST'){ http
 
 function e($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
+function public_form_rate_limited(string $key, int $maxAttempts, int $windowSeconds): bool {
+  $now = time();
+  if (!isset($_SESSION['public_form_rate']) || !is_array($_SESSION['public_form_rate'])) {
+    $_SESSION['public_form_rate'] = [];
+  }
+  $bucket = $_SESSION['public_form_rate'][$key] ?? ['start' => $now, 'count' => 0];
+  $start = (int)($bucket['start'] ?? $now);
+  $count = (int)($bucket['count'] ?? 0);
+  if (($now - $start) > $windowSeconds) {
+    $start = $now;
+    $count = 0;
+  }
+  $count++;
+  $_SESSION['public_form_rate'][$key] = ['start' => $start, 'count' => $count];
+  return $count > $maxAttempts;
+}
+
+function public_form_honeypot_filled(): bool {
+  return trim((string)($_POST['website'] ?? '')) !== '';
+}
+
 function flash($k,$v=null){
 
   if (!isset($_SESSION['flash']) || !is_array($_SESSION['flash'])) { $_SESSION['flash'] = []; }
@@ -640,6 +661,10 @@ function ensure_upload_dir($dateFolder){
 if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='lapor')) {
 
   require_post_with_csrf();
+  if (public_form_honeypot_filled() || public_form_rate_limited('lapor', 5, 300)) {
+    flash('err_report','Terlalu banyak percobaan submit. Silakan coba lagi beberapa saat.');
+    header('Location: '.$_SERVER['PHP_SELF'].'#pelaporan'); exit;
+  }
 
   global $ALLOWED_MIMES, $MAX_SIZE;
 
@@ -669,11 +694,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='lapor'))
 
   $stmt=$conn->prepare("INSERT INTO pelaporan (kode,judul,kategori,isi,anonim,status,tanggal,created_at) VALUES (?,?,?,?,?,?,?,NOW())");
 
-  if(!$stmt){ flash('err_report','Query error: '.e($conn->error)); header('Location: '.$_SERVER['PHP_SELF'].'#pelaporan'); exit; }
+  if(!$stmt){ flash('err_report','Terjadi kendala sistem saat menyimpan laporan. Silakan coba lagi.'); header('Location: '.$_SERVER['PHP_SELF'].'#pelaporan'); exit; }
 
   $stmt->bind_param("ssssiss",$kode,$judul,$kategori,$isi,$anonim,$status,$tanggal);
 
-  if(!$stmt->execute()){ flash('err_report','Gagal menyimpan: '.e($conn->error)); header('Location: '.$_SERVER['PHP_SELF'].'#pelaporan'); exit; }
+  if(!$stmt->execute()){ flash('err_report','Terjadi kendala sistem saat menyimpan laporan. Silakan coba lagi.'); header('Location: '.$_SERVER['PHP_SELF'].'#pelaporan'); exit; }
 
 
 
@@ -786,14 +811,24 @@ $name = trim($_FILES['lampiran']['name'][$i]);
 
 $size = (int)$_FILES['lampiran']['size'][$i];
 
-// Aman tanpa mime_content_type()
-$type = $_FILES['lampiran']['type'][$i] ?? '';
+$originalExt = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+$blockedExt = ['php','phtml','php3','php4','php5','php7','php8','phar','html','htm','js','exe','bat','cmd','sh','svg'];
+if ($originalExt === '' || in_array($originalExt, $blockedExt, true)) { continue; }
+$type = '';
+if (class_exists('finfo')) {
+  $finfo = new finfo(FILEINFO_MIME_TYPE);
+  $type = (string)($finfo->file($tmp) ?: '');
+}
+if ($type === '') {
+  $type = $_FILES['lampiran']['type'][$i] ?? '';
+}
 
 if ($size <= 0 || $size > $MAX_SIZE) { continue; }
 
 if (!isset($ALLOWED_MIMES[$type])) { continue; }
 
 $ext = $ALLOWED_MIMES[$type];
+if ($originalExt !== $ext && !($type === 'image/jpeg' && $originalExt === 'jpeg')) { continue; }
 
 $stored = $kode . '-' . bin2hex(random_bytes(6)) . '.' . $ext;
 
@@ -852,10 +887,14 @@ if (move_uploaded_file($tmp, $dest)) {
 if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='lacak')) {
 
   require_post_with_csrf();
+  if (public_form_honeypot_filled() || public_form_rate_limited('lacak', 20, 300)) {
+    flash('err_track','Terlalu banyak percobaan lacak. Silakan coba lagi beberapa saat.');
+    header('Location: '.$_SERVER['PHP_SELF'].'#lacak-pengaduan'); exit;
+  }
 
-  $kode=trim($_POST['kode']??''); if($kode===''){ flash('err_track','Masukkan kode tracking.'); header('Location: '.$_SERVER['PHP_SELF'].'#lacak'); exit; }
+  $kode=trim($_POST['kode']??''); if($kode===''){ flash('err_track','Masukkan kode tracking.'); header('Location: '.$_SERVER['PHP_SELF'].'#lacak-pengaduan'); exit; }
 
-  header('Location: '.$_SERVER['PHP_SELF'].'?action=lihat&kode='.urlencode($kode).'#lacak'); exit;
+  header('Location: '.$_SERVER['PHP_SELF'].'?action=lihat&kode='.urlencode($kode).'#lacak-pengaduan'); exit;
 
 }
 
@@ -866,20 +905,24 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='lacak'))
 if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='feedback')) {
 
   require_post_with_csrf();
+  if (public_form_honeypot_filled() || public_form_rate_limited('feedback', 5, 300)) {
+    flash('err_fb','Terlalu banyak percobaan submit. Silakan coba lagi beberapa saat.');
+    header('Location: '.$_SERVER['PHP_SELF'].'#saran-kritik'); exit;
+  }
 
   $nama=trim($_POST['nama_fb']??''); $email=trim($_POST['email_fb']??''); $text=trim($_POST['isi_fb']??'');
 
-  if($text===''){ flash('err_fb','Isi saran/kritik wajib diisi.'); header('Location: '.$_SERVER['PHP_SELF'].'#saran'); exit; }
+  if($text===''){ flash('err_fb','Isi saran/kritik wajib diisi.'); header('Location: '.$_SERVER['PHP_SELF'].'#saran-kritik'); exit; }
 
   $stmt=$conn->prepare("INSERT INTO feedback (nama,email,isi,created_at) VALUES (?,?,?,NOW())");
 
-  if(!$stmt){ flash('err_fb','Query error: '.e($conn->error)); header('Location: '.$_SERVER['PHP_SELF'].'#saran'); exit; }
+  if(!$stmt){ flash('err_fb','Terjadi kendala sistem saat menyimpan saran/kritik. Silakan coba lagi.'); header('Location: '.$_SERVER['PHP_SELF'].'#saran-kritik'); exit; }
 
   $stmt->bind_param("sss",$nama,$email,$text);
 
-  $stmt->execute()? flash('ok_fb','Terima kasih! Saran/kritik Anda terekam.') : flash('err_fb','Gagal menyimpan: '.e($conn->error));
+  $stmt->execute()? flash('ok_fb','Terima kasih! Saran/kritik Anda terekam.') : flash('err_fb','Terjadi kendala sistem saat menyimpan saran/kritik. Silakan coba lagi.');
 
-  header('Location: '.$_SERVER['PHP_SELF'].'#saran'); exit;
+  header('Location: '.$_SERVER['PHP_SELF'].'#saran-kritik'); exit;
 
 }
 
@@ -1045,6 +1088,132 @@ foreach($logPublik as &$logItem){
 
 unset($logItem);
 
+function login_table_exists(mysqli $conn, string $table): bool {
+  static $cache = [];
+  if (isset($cache[$table])) return $cache[$table];
+  $tableEsc = $conn->real_escape_string($table);
+  $ok = false;
+  if ($rs = $conn->query("SHOW TABLES LIKE '{$tableEsc}'")) {
+    $ok = $rs->num_rows > 0;
+    $rs->free();
+  }
+  return $cache[$table] = $ok;
+}
+
+$publicMediaBase = __DIR__ . '/assets/public';
+$publicMediaUrl = '/ski_new/assets/public';
+$publicMediaSlides = [];
+
+if (login_table_exists($conn, 'public_media')) {
+  if ($qm = $conn->query("SELECT title, caption, file_path, media_type FROM public_media WHERE is_active = 1 ORDER BY sort_order ASC, id DESC")) {
+    while ($media = $qm->fetch_assoc()) {
+      $relPath = trim((string)($media['file_path'] ?? ''));
+      $mediaType = strtolower(trim((string)($media['media_type'] ?? '')));
+      if ($relPath === '' || !in_array($mediaType, ['image', 'video'], true)) continue;
+      $fullPath = __DIR__ . '/' . ltrim(str_replace(['\\', '..'], ['/', ''], $relPath), '/');
+      if (!is_file($fullPath)) continue;
+      $publicMediaSlides[] = [
+        'type' => $mediaType,
+        'src' => '/ski_new/' . ltrim(str_replace('\\', '/', $relPath), '/'),
+        'title' => trim((string)($media['title'] ?? '')),
+        'caption' => trim((string)($media['caption'] ?? '')),
+      ];
+    }
+    $qm->free();
+  }
+}
+
+if (empty($publicMediaSlides)) {
+  $legacyMedia = [
+    ['type' => 'video', 'path' => $publicMediaBase . '/edukasi-sikat.mp4', 'src' => $publicMediaUrl . '/edukasi-sikat.mp4'],
+    ['type' => 'video', 'path' => $publicMediaBase . '/videos/edukasi-sikat.mp4', 'src' => $publicMediaUrl . '/videos/edukasi-sikat.mp4'],
+    ['type' => 'image', 'path' => $publicMediaBase . '/banner-sikat.jpg', 'src' => $publicMediaUrl . '/banner-sikat.jpg'],
+    ['type' => 'image', 'path' => $publicMediaBase . '/poster-kepatuhan.jpg', 'src' => $publicMediaUrl . '/poster-kepatuhan.jpg'],
+  ];
+  foreach ($legacyMedia as $media) {
+    if (is_file($media['path'])) {
+      $publicMediaSlides[] = [
+        'type' => $media['type'],
+        'src' => $media['src'],
+        'title' => 'Media edukasi SIKAT',
+        'caption' => '',
+      ];
+      break;
+    }
+  }
+}
+
+$publicContact = null;
+$publicContactWaLink = '';
+$publicContactMailLink = '';
+$publicContactMapsLink = '';
+$publicSocialLinks = [];
+
+function login_public_whatsapp_link(string $number): string {
+  $digits = preg_replace('/\D+/', '', $number) ?: '';
+  if ($digits === '') return '';
+  if (strpos($digits, '0') === 0) {
+    $digits = '62' . substr($digits, 1);
+  }
+  return 'https://wa.me/' . $digits;
+}
+
+function login_public_http_url(string $url): string {
+  $url = trim($url);
+  if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) return '';
+  $scheme = strtolower((string)(parse_url($url, PHP_URL_SCHEME) ?: ''));
+  return in_array($scheme, ['http', 'https'], true) ? $url : '';
+}
+
+if (login_table_exists($conn, 'public_contacts')) {
+  if ($qc = $conn->query("SELECT contact_name, description, whatsapp, phone, email, address, service_hours, maps_url FROM public_contacts WHERE is_active = 1 ORDER BY id ASC LIMIT 1")) {
+    $row = $qc->fetch_assoc();
+    if ($row) {
+      $publicContact = $row;
+      $publicContactWaLink = login_public_whatsapp_link((string)($row['whatsapp'] ?? ''));
+      $email = trim((string)($row['email'] ?? ''));
+      if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $publicContactMailLink = 'mailto:' . $email;
+      }
+      $mapsUrl = trim((string)($row['maps_url'] ?? ''));
+      $publicContactMapsLink = login_public_http_url($mapsUrl);
+    }
+    $qc->free();
+  }
+}
+
+$publicSocialIcons = [
+  'website' => 'globe',
+  'facebook' => 'facebook',
+  'instagram' => 'instagram',
+  'youtube' => 'youtube',
+  'tiktok' => 'tiktok',
+  'twitter' => 'twitter-x',
+  'whatsapp_channel' => 'whatsapp',
+  'linkedin' => 'linkedin',
+];
+
+if (login_table_exists($conn, 'public_social_links')) {
+  if ($qs = $conn->query("SELECT platform, label, url, icon_key FROM public_social_links WHERE is_active = 1 ORDER BY sort_order ASC, id ASC")) {
+    while ($social = $qs->fetch_assoc()) {
+      $url = login_public_http_url((string)($social['url'] ?? ''));
+      $label = trim((string)($social['label'] ?? ''));
+      if ($url === '' || $label === '') continue;
+      $platform = strtolower(trim((string)($social['platform'] ?? '')));
+      $iconKey = trim((string)($social['icon_key'] ?? ''));
+      if ($iconKey === '') {
+        $iconKey = $publicSocialIcons[$platform] ?? 'link-45deg';
+      }
+      $publicSocialLinks[] = [
+        'label' => $label,
+        'url' => $url,
+        'icon' => preg_replace('/[^a-z0-9-]/', '', strtolower($iconKey)) ?: 'link-45deg',
+      ];
+    }
+    $qs->free();
+  }
+}
+
 ?>
 
 <!doctype html>
@@ -1082,13 +1251,13 @@ unset($logItem);
 
     .app-header{background:var(--brand-green); border-bottom:3px solid var(--brand-accent); color:#fff;}
 
-    .public-page .app-header{padding-top:.5rem; padding-bottom:.5rem;}
+    .public-page .app-header{padding-top:.3rem; padding-bottom:.3rem;}
 
-    .app-header .brand-title{font-weight:600; letter-spacing:.2px; font-size:.95rem; line-height:1.3;}
+    .app-header .brand-title{font-weight:600; letter-spacing:.2px; font-size:.9rem; line-height:1.25;}
 
-    .login-logo{height:56px !important; width:auto;}
+    .login-logo{height:50px !important; width:auto;}
     .public-page .app-header .sikat-logo-wrap{display:inline-flex;align-items:center;line-height:0;padding:0;border:0;background:transparent;}
-    .public-page .app-header .login-logo{display:block;height:56px;width:auto;}
+    .public-page .app-header .login-logo{display:block;height:50px;width:auto;}
     .public-page .app-header .public-logo{filter:drop-shadow(0 0 1px rgba(240,195,0,.9)) drop-shadow(0 0 4px rgba(255,255,255,.9));-webkit-filter:drop-shadow(0 0 1px rgba(240,195,0,.9)) drop-shadow(0 0 4px rgba(255,255,255,.9));}
 
     .public-summary{background:#f7fbf8;}
@@ -1097,21 +1266,154 @@ unset($logItem);
 
     .soft-card{background:#fff;border:1px solid var(--border-soft);border-radius:14px;box-shadow:0 6px 18px rgba(16,122,61,.06);}
 
+    .public-hero{background:linear-gradient(135deg,#ffffff 0%,#f2faf5 100%);overflow:hidden;padding:24px !important;}
+    .public-hero-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:32px;align-items:start;}
+    .hero-copy{max-width:440px;align-self:start;padding-top:24px;}
+    .hero-media-column{width:100%;max-width:760px;justify-self:center;}
+    .hero-copy .section-kicker{margin-bottom:6px;}
+    .public-hero h1{color:#0f6e39;font-weight:800;letter-spacing:0;font-size:clamp(1.45rem,2.25vw,2.05rem);line-height:1.16;margin-bottom:14px !important;}
+    .public-hero .lead{color:#4f675a;font-size:.96rem;line-height:1.52;max-width:500px;margin-bottom:0 !important;}
+    .hero-services{margin-top:20px;}
+    .hero-services-title{font-size:.9rem;font-weight:800;color:#164d38;margin-bottom:8px;}
+    .hero-services-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+    .hero-service-link{width:100%;min-height:46px;display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid #d7eadf;border-radius:10px;background:rgba(255,255,255,.78);color:#174a3a;text-decoration:none;font-size:.82rem;font-weight:800;cursor:pointer;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease;}
+    .hero-service-link:hover{background:#fff;border-color:#acd8bd;color:#0f6e39;box-shadow:0 6px 14px rgba(16,122,61,.08);transform:translateY(-1px);}
+    .hero-service-link:focus-visible{outline:2px solid #0d7b45;outline-offset:2px;background:#fff;border-color:#91c9a7;}
+    .hero-service-link i:first-child{color:#107a3d;font-size:.95rem;}
+    .hero-service-link .bi-arrow-right-short{margin-left:auto;font-size:1rem;}
+    .hero-social{margin-top:16px;}
+    .hero-social-title{font-size:.82rem;font-weight:800;color:#164d38;margin-bottom:7px;}
+    .hero-social-list{display:flex;flex-wrap:wrap;gap:7px;}
+    .hero-social-link{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:6px 10px;border:1px solid #d7eadf;border-radius:999px;background:rgba(255,255,255,.82);color:#174a3a;text-decoration:none;font-size:.78rem;font-weight:800;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease;}
+    .hero-social-link:hover{background:#fff;border-color:#acd8bd;color:#0f6e39;box-shadow:0 6px 14px rgba(16,122,61,.08);transform:translateY(-1px);}
+    .hero-social-link i{color:#107a3d;font-size:.9rem;}
+    .public-media{background:#fff;border:1px solid #d9eadf;border-radius:12px;overflow:hidden;display:flex;align-items:stretch;justify-content:center;position:relative;}
+    .media-frame{width:100%;height:370px;overflow:hidden;background:linear-gradient(135deg,#f4fbf7 0%,#e8f4ed 100%);position:relative;display:flex;align-items:center;justify-content:center;}
+    .media-frame.media-landscape{background:#f4fbf7;}
+    .media-frame.media-portrait{background:linear-gradient(135deg,#f7fcf9 0%,#e4f2e9 100%);}
+    .media-frame.media-video{background:#0b2c20;}
+    .public-media img,.public-media video{width:100%;height:100%;object-fit:contain;display:block;}
+    .public-media video{object-fit:contain;background:#0b2c20;}
+    .media-frame.media-portrait img{width:auto;height:100%;max-width:100%;object-fit:contain;}
+    .media-frame.media-landscape img{width:100%;height:100%;object-fit:contain;}
+    .media-frame.media-video video{width:100%;height:100%;object-fit:contain;}
+    .public-media .carousel,.public-media .carousel-inner,.public-media .carousel-item{width:100%;}
+    .public-media-caption{padding:14px 16px 16px;background:#fff;border-top:1px solid #dcefe4;color:#244d3a;text-align:left;}
+    .public-media-caption h2{font-size:1rem;font-weight:800;margin:0 0 4px;color:#164d38;}
+    .public-media-caption p{font-size:.88rem;margin:0;color:#607066;line-height:1.45;}
+    .caption-short{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+    .caption-full{display:none;margin-top:8px;}
+    .caption-toggle{display:inline-flex;align-items:center;gap:.25rem;margin-top:8px;padding:0;border:0;background:transparent;color:#107a3d;font-size:.84rem;font-weight:800;}
+    .caption-toggle:hover{text-decoration:underline;}
+    .public-media-caption.is-expanded .caption-short{display:none;}
+    .public-media-caption.is-expanded .caption-full{display:block;}
+    .public-media .carousel-indicators{margin-bottom:.35rem;}
+    .public-media .carousel-control-prev,.public-media .carousel-control-next{width:12%;}
+    .public-media-placeholder{width:100%;min-height:260px;padding:30px;text-align:center;color:#52675d;background:
+      radial-gradient(circle at 18% 20%, rgba(240,195,0,.18) 0 42px, transparent 43px),
+      radial-gradient(circle at 82% 78%, rgba(16,122,61,.12) 0 62px, transparent 63px),
+      linear-gradient(135deg,#f9fcfa 0%,#edf7f1 100%);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;}
+    .public-media-placeholder .media-icon{width:76px;height:76px;border-radius:20px;display:inline-flex;align-items:center;justify-content:center;background:#e7f5ee;color:#107a3d;font-size:2.4rem;margin-bottom:14px;border:1px solid #cfe7da;box-shadow:0 10px 24px rgba(16,122,61,.12);}
+    .media-path-pill{display:inline-flex;align-items:center;gap:.4rem;margin-top:14px;padding:7px 10px;border-radius:999px;background:#fff;border:1px solid #dcefe4;color:#315b4d;font-size:.78rem;font-weight:700;}
+    .media-file-list{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin-top:12px;}
+    .section-kicker{font-size:.78rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#107a3d;margin-bottom:4px;}
+    .service-grid,.flow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
+    .internal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px;}
+    .service-card,.flow-card{background:#fff;border:1px solid #e1eee6;border-radius:12px;padding:16px;height:100%;}
+    .service-card{display:flex;flex-direction:column;text-decoration:none;color:inherit;transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;}
+    .service-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(16,122,61,.1);border-color:#bfe3cc;color:inherit;}
+    .service-icon,.flow-step{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;background:#e7f5ee;color:#107a3d;font-weight:800;margin-bottom:8px;}
+    .service-card h3,.flow-card h3{font-size:.98rem;color:#164d38;margin-bottom:6px;font-weight:800;}
+    .service-card p,.flow-card p{font-size:.86rem;color:#64746c;line-height:1.4;margin:0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+    .service-action{display:inline-flex;align-items:center;gap:.35rem;margin-top:auto;padding-top:10px;color:#107a3d;font-size:.82rem;font-weight:800;}
+    .internal-card{position:relative;padding:12px;}
+    .internal-card p{-webkit-line-clamp:2;font-size:.82rem;}
+    .internal-card .service-icon{width:30px;height:30px;margin-bottom:7px;}
+    .internal-card h3{font-size:.92rem;margin-bottom:4px;padding-right:58px;}
+    .internal-section{margin-top:18px;padding-top:16px;border-top:1px solid #e6f0ea;}
+    .internal-section-title{font-size:.95rem;font-weight:800;color:#164d38;margin-bottom:2px;}
+    .contact-callout{margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f7fbf8;border:1px solid #dcefe4;border-radius:12px;padding:12px 14px;}
+    .contact-callout strong{color:#164d38;}
+    .public-contact-card{background:#fff;border:1px solid #dcefe4;border-radius:12px;padding:18px;box-shadow:0 4px 14px rgba(16,122,61,.05);}
+    .public-contact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;}
+    .public-contact-item{display:flex;gap:10px;align-items:flex-start;background:#f7fbf8;border:1px solid #e2f0e8;border-radius:10px;padding:10px 12px;min-width:0;}
+    .public-contact-item i{color:#107a3d;margin-top:2px;}
+    .public-contact-item span{display:block;font-size:.78rem;font-weight:800;color:#607066;text-transform:uppercase;letter-spacing:.04em;}
+    .public-contact-item strong{display:block;color:#164d38;font-size:.92rem;font-weight:800;overflow-wrap:anywhere;}
+    .public-contact-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
+    .public-social-links{margin-top:16px;padding-top:14px;border-top:1px solid #e2f0e8;}
+    .public-social-title{font-size:.86rem;font-weight:800;color:#164d38;margin-bottom:8px;}
+    .public-social-list{display:flex;flex-wrap:wrap;gap:8px;}
+    .public-social-link{display:inline-flex;align-items:center;gap:6px;border:1px solid #d6e9de;border-radius:999px;background:#f7fbf8;color:#174a3a;text-decoration:none;padding:7px 11px;font-size:.84rem;font-weight:800;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease;}
+    .public-social-link:hover{background:#fff;border-color:#acd8bd;color:#0f6e39;box-shadow:0 6px 14px rgba(16,122,61,.08);transform:translateY(-1px);}
+    .public-social-link i{color:#107a3d;}
+    .contact-empty{display:flex;align-items:center;gap:10px;background:#f7fbf8;border:1px dashed #bfe3cc;border-radius:12px;padding:14px;color:#52675d;}
+    .contact-empty i{color:#107a3d;font-size:1.35rem;}
+    .contact-panel{display:none;}
+    .contact-panel.is-open{display:block;animation:contactFadeIn .18s ease;}
+    .contact-toggle .bi{transition:transform .16s ease;}
+    .contact-toggle[aria-expanded="true"] .bi{transform:rotate(180deg);}
+    @keyframes contactFadeIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
+
     .btn-primary{ background:var(--brand-green); border-color:var(--brand-green-dark); }
 
     .btn-primary:hover{ background:var(--brand-green-dark); border-color:var(--brand-green-dark); }
 
-    .menu-row{display:flex;flex-wrap:wrap;gap:10px;}
+    .menu-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
 
-    .menu-tile{display:flex;align-items:center;gap:.6rem;background:#f1f6f2;border:1px solid #e2eee7;color:#1b5a40;border-radius:10px;padding:8px 12px;text-decoration:none;white-space:nowrap;flex:0 0 auto;min-width:210px;font-weight:600;font-size:.95rem;}
+    .menu-tile{display:flex;align-items:center;gap:.6rem;background:#fff;border:1px solid #dcefe4;color:#1b5a40;border-radius:10px;padding:10px 12px;text-decoration:none;min-width:0;font-weight:700;font-size:.92rem;box-shadow:0 2px 8px rgba(16,122,61,.04);}
 
     .menu-tile i{margin-right:.2rem;opacity:.85;}
 
-    @media (min-width: 992px){ .menu-row{flex-wrap:nowrap; overflow-x:auto;} }
+    .menu-tile:hover{background:#eef8f2;color:#0f6e39;border-color:#bfe3cc;}
+    .internal-badge{margin-left:auto;padding:1px 6px;border-radius:999px;background:#fff8dc;color:#78620a;border:1px solid #f3dc82;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.025em;}
+    .back-top-link{display:inline-flex;align-items:center;gap:.45rem;border:1px solid #dcefe4;background:#fff;color:#1b5a40;border-radius:999px;padding:8px 12px;text-decoration:none;font-weight:700;font-size:.9rem;}
+    .back-top-link:hover{background:#eef8f2;color:#0f6e39;border-color:#bfe3cc;}
+
+    .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
+    .stat-card{background:#fff;border:1px solid #dcefe4;border-radius:12px;padding:14px 16px;box-shadow:0 2px 8px rgba(16,122,61,.04);}
+    .stat-card .h4{color:#0f6e39;font-weight:800;}
+    .public-form-card .form-label{font-weight:700;color:#244d3a;font-size:.92rem;}
+    .public-form-card .form-control,.public-form-card .form-select{border-color:#d3e7dc;border-radius:10px;}
+    .public-form-card .form-control:focus,.public-form-card .form-select:focus{border-color:#107a3d;box-shadow:0 0 0 .2rem rgba(16,122,61,.12);}
+    .track-panel{background:#f7fbf8;border:1px solid #dcefe4;border-radius:12px;padding:14px;}
+    .form-section{border:1px solid #e1eee6;border-radius:12px;padding:16px;background:#fff;margin-bottom:14px;}
+    .form-section-title{display:flex;align-items:center;gap:.5rem;color:#164d38;font-weight:800;font-size:.95rem;margin-bottom:12px;}
+    .form-section-title i{color:#107a3d;}
+    .helper-text{font-size:.82rem;color:#6b7280;margin-top:5px;}
+    .submit-panel{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;border-radius:12px;background:#f7fbf8;border:1px solid #dcefe4;padding:14px;}
+    .public-action-modal .modal-content{max-height:85vh;border:1px solid #dcefe4;border-radius:14px;overflow:hidden;}
+    .public-action-modal .modal-header{background:#f7fbf8;border-bottom:1px solid #dcefe4;}
+    .public-action-modal .modal-body{overflow-y:auto;padding:20px;}
+    .modal-backdrop.show{opacity:.45;}
 
     .dropdown-menu{ z-index: 2000; }
 
     .file-hint{font-size:.875rem;color:#6b7280}
+
+    @media (max-width: 992px){
+      .service-grid,.flow-grid,.stat-grid,.internal-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+      .public-hero-grid{grid-template-columns:minmax(0,45fr) minmax(0,55fr);gap:22px;}
+      .media-frame{height:320px;}
+      .hero-copy{max-width:none;padding-top:18px;}
+    }
+
+    @media (max-width: 767px){
+      .public-hero-grid{grid-template-columns:1fr;gap:22px;}
+      .hero-media-column{max-width:none;}
+      .hero-copy{padding-top:0;}
+    }
+
+    @media (max-width: 576px){
+      .service-grid,.flow-grid,.stat-grid,.internal-grid{grid-template-columns:1fr;}
+      .hero-services-grid{grid-template-columns:1fr;}
+      .hero-services{margin-top:16px;}
+      .hero-service-link{min-height:44px;padding:9px 11px;}
+      .contact-callout{align-items:flex-start;flex-direction:column;}
+      .public-contact-grid{grid-template-columns:1fr;}
+      .media-frame{height:270px;}
+    }
 
   </style>
 
@@ -1125,7 +1427,7 @@ unset($logItem);
 
   <!-- Header -->
 
-  <header class="app-header py-3">
+  <header class="app-header" id="top">
 
     <div class="container d-flex align-items-center justify-content-between">
 
@@ -1215,57 +1517,267 @@ unset($logItem);
 
 
 
-    <!-- Menu Umum -->
+    <!-- Hero Publik -->
 
-    <div class="soft-card p-4 mb-4 public-summary">
+    <section class="soft-card public-hero mb-4">
 
-      <h2 class="h5 text-success mb-3">Menu Umum</h2>
+      <div class="public-hero-grid">
 
-      <div class="menu-row">
+        <div class="hero-copy">
 
-        <a class="menu-tile" href="#pelaporan"><i class="bi bi-flag"></i>Pelaporan</a>
+          <div class="section-kicker">Portal Publik SIKAT</div>
 
-        <a class="menu-tile" href="#lacak"><i class="bi bi-search"></i>Lacak Pengaduan</a>
+          <h1 class="mb-3">Laporkan, Pantau, dan Dukung Kepatuhan Internal</h1>
 
-        <a class="menu-tile" href="#saran"><i class="bi bi-chat-dots"></i>Saran & Kritik</a>
+          <p class="lead mb-4">SIKAT menjadi kanal publik untuk menyampaikan laporan, memantau pengaduan, memberikan saran dan kritik, mengakses kebijakan, serta mendukung proses e-reviu secara terdokumentasi.</p>
 
-        <a class="menu-tile" href="kebijakan.php"><i class="bi bi-journal-text"></i>Data Kebijakan</a>
+          <div class="hero-services">
+            <div class="hero-services-title">Layanan publik dan akses cepat</div>
+            <div class="hero-services-grid">
+              <a class="hero-service-link" href="#pelaporan" data-modal-target="pelaporanModal"><i class="bi bi-flag"></i><span>Pelaporan</span><i class="bi bi-arrow-right-short"></i></a>
+              <a class="hero-service-link" href="#lacak-pengaduan" data-modal-target="lacakModal"><i class="bi bi-search"></i><span>Lacak Pengaduan</span><i class="bi bi-arrow-right-short"></i></a>
+              <a class="hero-service-link" href="#saran-kritik" data-modal-target="saranModal"><i class="bi bi-chat-dots"></i><span>Saran & Kritik</span><i class="bi bi-arrow-right-short"></i></a>
+              <a class="hero-service-link" href="kebijakan.php"><i class="bi bi-journal-text"></i><span>Data Kebijakan</span><i class="bi bi-arrow-right-short"></i></a>
+            </div>
+          </div>
 
-        <a class="menu-tile" href="review.php"><i class="bi bi-clipboard2-data"></i>E-Reviu</a>
+          <?php if (!empty($publicSocialLinks)): ?>
+            <div class="hero-social">
+              <div class="hero-social-title">Terhubung dengan kami</div>
+              <div class="hero-social-list">
+                <?php foreach ($publicSocialLinks as $social): ?>
+                  <a class="hero-social-link" href="<?= e($social['url']) ?>" target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-<?= e($social['icon']) ?>"></i><span><?= e($social['label']) ?></span>
+                  </a>
+                <?php endforeach; ?>
+              </div>
+            </div>
+          <?php endif; ?>
 
-        <a class="menu-tile" href="risiko.php"><i class="bi bi-shield-check"></i>Manajemen Risiko</a>
+        </div>
 
-        <a class="menu-tile" href="self_assessment.php"><i class="bi bi-check2-square"></i>Self-Assessment</a>
+        <div class="hero-media-column">
 
-        <a class="menu-tile" href="kontak.php"><i class="bi bi-telephone"></i>Kontak</a>
+          <div class="public-media">
+
+            <?php if (!empty($publicMediaSlides)): ?>
+
+              <div id="publicMediaCarousel" class="carousel slide" data-bs-ride="carousel" data-bs-interval="6500">
+                <?php if (count($publicMediaSlides) > 1): ?>
+                  <div class="carousel-indicators">
+                    <?php foreach ($publicMediaSlides as $idx => $_slide): ?>
+                      <button type="button" data-bs-target="#publicMediaCarousel" data-bs-slide-to="<?= (int)$idx ?>" class="<?= $idx === 0 ? 'active' : '' ?>" aria-current="<?= $idx === 0 ? 'true' : 'false' ?>" aria-label="Slide <?= (int)$idx + 1 ?>"></button>
+                    <?php endforeach; ?>
+                  </div>
+                <?php endif; ?>
+
+                <div class="carousel-inner">
+                  <?php foreach ($publicMediaSlides as $idx => $slide): ?>
+                    <div class="carousel-item <?= $idx === 0 ? 'active' : '' ?>" data-bs-interval="<?= $slide['type'] === 'video' ? 'false' : '6500' ?>">
+                      <?php if ($slide['type'] === 'video'): ?>
+                        <div class="media-frame media-video">
+                          <video controls preload="metadata">
+                            <source src="<?= e($slide['src']) ?>">
+                            Browser Anda tidak mendukung pemutaran video.
+                          </video>
+                        </div>
+                      <?php else: ?>
+                        <div class="media-frame media-landscape">
+                          <img src="<?= e($slide['src']) ?>" alt="<?= e($slide['title'] ?: 'Media edukasi SIKAT') ?>">
+                        </div>
+                      <?php endif; ?>
+                      <?php if (($slide['title'] ?? '') !== '' || ($slide['caption'] ?? '') !== ''): ?>
+                        <div class="public-media-caption">
+                          <?php if (($slide['title'] ?? '') !== ''): ?><h2><?= e($slide['title']) ?></h2><?php endif; ?>
+                          <?php if (($slide['caption'] ?? '') !== ''): ?>
+                            <?php $caption = (string)$slide['caption']; $isLongCaption = function_exists('mb_strlen') ? mb_strlen($caption, 'UTF-8') > 150 : strlen($caption) > 150; ?>
+                            <p class="caption-short"><?= e($caption) ?></p>
+                            <?php if ($isLongCaption): ?>
+                              <p class="caption-full"><?= e($caption) ?></p>
+                              <button type="button" class="caption-toggle" aria-expanded="false">Baca selengkapnya <i class="bi bi-chevron-down"></i></button>
+                            <?php endif; ?>
+                          <?php endif; ?>
+                        </div>
+                      <?php endif; ?>
+                    </div>
+                  <?php endforeach; ?>
+                </div>
+
+                <?php if (count($publicMediaSlides) > 1): ?>
+                  <button class="carousel-control-prev" type="button" data-bs-target="#publicMediaCarousel" data-bs-slide="prev">
+                    <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                    <span class="visually-hidden">Sebelumnya</span>
+                  </button>
+                  <button class="carousel-control-next" type="button" data-bs-target="#publicMediaCarousel" data-bs-slide="next">
+                    <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                    <span class="visually-hidden">Berikutnya</span>
+                  </button>
+                <?php endif; ?>
+              </div>
+
+            <?php else: ?>
+
+              <div class="public-media-placeholder">
+                <div class="media-icon"><i class="bi bi-shield-check"></i></div>
+                <h2 class="h5 text-success mb-2">Media edukasi kepatuhan</h2>
+                <p class="mb-0">Tambahkan poster atau video edukasi agar portal publik SIKAT menampilkan informasi kepatuhan yang lebih kaya.</p>
+                <div class="media-file-list">
+                  <span class="media-path-pill"><i class="bi bi-film"></i> assets/public/edukasi-sikat.mp4</span>
+                  <span class="media-path-pill"><i class="bi bi-image"></i> assets/public/banner-sikat.jpg</span>
+                  <span class="media-path-pill"><i class="bi bi-file-image"></i> assets/public/poster-kepatuhan.jpg</span>
+                </div>
+              </div>
+
+            <?php endif; ?>
+
+          </div>
+
+        </div>
 
       </div>
 
+    </section>
+
+    <!-- Alur Pelaporan -->
+
+    <section class="soft-card p-4 mb-4">
+
+      <div class="section-kicker">Alur Pelaporan</div>
+
+      <h2 class="h5 text-success mb-3">Empat langkah sederhana</h2>
+
+      <div class="flow-grid">
+
+        <div class="flow-card"><div class="flow-step">1</div><h3>Isi laporan</h3><p>Lengkapi kategori, uraian laporan, dan lampiran pendukung bila tersedia.</p></div>
+
+        <div class="flow-card"><div class="flow-step">2</div><h3>Simpan kode tracking</h3><p>Kode tracking digunakan untuk memantau perkembangan laporan.</p></div>
+
+        <div class="flow-card"><div class="flow-step">3</div><h3>Tim melakukan verifikasi</h3><p>Tim menelaah laporan dan memastikan informasi dapat diproses.</p></div>
+
+        <div class="flow-card"><div class="flow-step">4</div><h3>Pantau tindak lanjut</h3><p>Status laporan dapat dilihat kembali melalui fitur Lacak Pengaduan.</p></div>
+
+      </div>
+
+    </section>
 
 
-      <div class="d-flex flex-wrap gap-3 mt-4">
 
-        <div class="soft-card px-4 py-3"><div class="small text-muted">Total Pengaduan</div><div class="h4 mb-0"><?= (int)$stat['total'] ?></div></div>
+    <!-- Akses Internal -->
 
-        <div class="soft-card px-4 py-3"><div class="small text-muted">Pengaduan Masuk</div><div class="h4 mb-0"><?= (int)$stat['masuk'] ?></div></div>
+    <section class="soft-card p-4 mb-4">
+      <div class="internal-section-title">Akses Internal</div>
+      <div class="text-muted small mb-2">Fitur berikut digunakan oleh pengguna internal/petugas yang memiliki akun.</div>
+      <div class="internal-grid">
+        <a class="service-card internal-card" href="review.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-clipboard2-data"></i></div><h3>E-Reviu</h3><p>Akses modul e-reviu untuk proses reviu internal yang terdokumentasi.</p><span class="service-action">Masuk E-Reviu <i class="bi bi-arrow-right-short"></i></span></a>
+        <a class="service-card internal-card" href="risiko.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-shield-check"></i></div><h3>Manajemen Risiko</h3><p>Pantau dan kelola risiko internal sesuai proses manajemen risiko.</p><span class="service-action">Akses Risiko <i class="bi bi-arrow-right-short"></i></span></a>
+        <a class="service-card internal-card" href="self_assessment.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-check2-square"></i></div><h3>Self-Assessment</h3><p>Gunakan modul penilaian mandiri untuk mendukung evaluasi kepatuhan.</p><span class="service-action">Mulai Assessment <i class="bi bi-arrow-right-short"></i></span></a>
+      </div>
+      <div class="contact-callout">
+        <div><strong>Butuh bantuan?</strong> Hubungi pengelola SIKAT atau tim terkait untuk informasi lebih lanjut.</div>
+        <a href="#kontak" class="btn btn-sm btn-outline-success contact-toggle" data-target="kontak" aria-controls="kontak" aria-expanded="false">Lihat Kontak <i class="bi bi-chevron-down ms-1"></i></a>
+      </div>
+    </section>
 
-        <div class="soft-card px-4 py-3"><div class="small text-muted">Tahap Berjalan</div><div class="h4 mb-0"><?= (int)$stat['proses'] ?></div></div>
+    <!-- Kontak Publik -->
+    <section class="soft-card p-4 mb-4 contact-panel" id="kontak" aria-hidden="true">
+      <div class="section-kicker">Kontak SIKAT</div>
+      <h2 class="h5 text-success mb-3">Informasi pengelola</h2>
+      <?php if ($publicContact): ?>
+        <div class="public-contact-card">
+          <h3 class="h6 text-success mb-2"><?= e($publicContact['contact_name'] ?: 'Pengelola SIKAT') ?></h3>
+          <?php if (trim((string)($publicContact['description'] ?? '')) !== ''): ?>
+            <p class="text-muted mb-0"><?= nl2br(e($publicContact['description'])) ?></p>
+          <?php endif; ?>
+          <div class="public-contact-grid">
+            <?php if (trim((string)($publicContact['whatsapp'] ?? '')) !== ''): ?>
+              <div class="public-contact-item"><i class="bi bi-whatsapp"></i><div><span>WhatsApp</span><strong><?= e($publicContact['whatsapp']) ?></strong></div></div>
+            <?php endif; ?>
+            <?php if (trim((string)($publicContact['phone'] ?? '')) !== ''): ?>
+              <div class="public-contact-item"><i class="bi bi-telephone"></i><div><span>Telepon</span><strong><?= e($publicContact['phone']) ?></strong></div></div>
+            <?php endif; ?>
+            <?php if (trim((string)($publicContact['email'] ?? '')) !== ''): ?>
+              <div class="public-contact-item"><i class="bi bi-envelope"></i><div><span>Email</span><strong><?= e($publicContact['email']) ?></strong></div></div>
+            <?php endif; ?>
+            <?php if (trim((string)($publicContact['service_hours'] ?? '')) !== ''): ?>
+              <div class="public-contact-item"><i class="bi bi-clock"></i><div><span>Jam Layanan</span><strong><?= e($publicContact['service_hours']) ?></strong></div></div>
+            <?php endif; ?>
+            <?php if (trim((string)($publicContact['address'] ?? '')) !== ''): ?>
+              <div class="public-contact-item"><i class="bi bi-geo-alt"></i><div><span>Alamat</span><strong><?= nl2br(e($publicContact['address'])) ?></strong></div></div>
+            <?php endif; ?>
+          </div>
+          <div class="public-contact-actions">
+            <?php if ($publicContactWaLink !== ''): ?>
+              <a class="btn btn-success btn-sm" href="<?= e($publicContactWaLink) ?>" target="_blank" rel="noopener"><i class="bi bi-whatsapp me-1"></i>Hubungi WhatsApp</a>
+            <?php endif; ?>
+            <?php if ($publicContactMailLink !== ''): ?>
+              <a class="btn btn-outline-success btn-sm" href="<?= e($publicContactMailLink) ?>"><i class="bi bi-envelope me-1"></i>Kirim Email</a>
+            <?php endif; ?>
+            <?php if ($publicContactMapsLink !== ''): ?>
+              <a class="btn btn-outline-success btn-sm" href="<?= e($publicContactMapsLink) ?>" target="_blank" rel="noopener"><i class="bi bi-geo-alt me-1"></i>Lihat Lokasi</a>
+            <?php endif; ?>
+          </div>
+          <?php if (!empty($publicSocialLinks)): ?>
+            <div class="public-social-links">
+              <div class="public-social-title">Terhubung dengan SIKAT</div>
+              <div class="public-social-list">
+                <?php foreach ($publicSocialLinks as $social): ?>
+                  <a class="public-social-link" href="<?= e($social['url']) ?>" target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-<?= e($social['icon']) ?>"></i><span><?= e($social['label']) ?></span>
+                  </a>
+                <?php endforeach; ?>
+              </div>
+            </div>
+          <?php endif; ?>
+        </div>
+      <?php else: ?>
+        <div class="contact-empty"><i class="bi bi-info-circle"></i><div>Informasi kontak pengelola SIKAT belum tersedia.</div></div>
+      <?php endif; ?>
+    </section>
 
-        <div class="soft-card px-4 py-3"><div class="small text-muted">Arsip</div><div class="h4 mb-0"><?= (int)$stat['arsip'] ?></div></div>
+
+
+    <!-- Ringkasan Pengaduan -->
+
+    <section class="soft-card p-4 mb-4 public-summary">
+
+      <div class="section-kicker">Ringkasan Pengaduan</div>
+
+      <h2 class="h5 text-success mb-3">Statistik laporan publik</h2>
+
+      <div class="stat-grid">
+
+        <div class="stat-card"><div class="small text-muted">Total Pengaduan</div><div class="h4 mb-0"><?= (int)$stat['total'] ?></div></div>
+
+        <div class="stat-card"><div class="small text-muted">Pengaduan Masuk</div><div class="h4 mb-0"><?= (int)$stat['masuk'] ?></div></div>
+
+        <div class="stat-card"><div class="small text-muted">Tahap Berjalan</div><div class="h4 mb-0"><?= (int)$stat['proses'] ?></div></div>
+
+        <div class="stat-card"><div class="small text-muted">Arsip</div><div class="h4 mb-0"><?= (int)$stat['arsip'] ?></div></div>
 
       </div>
 
       <div class="small text-muted mt-2">Pengaduan yang dikembalikan ke pelapor: <?= (int)$stat['kembali'] ?> laporan.</div>
 
-    </div>
+    </section>
 
 
 
-    <!-- Pelaporan -->
+    <!-- Pelaporan Modal -->
 
-    <section id="pelaporan" class="soft-card p-4 mb-4 public-focus">
+    <div class="modal fade" id="pelaporanModal" tabindex="-1" aria-labelledby="pelaporanModalLabel">
+      <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable public-action-modal">
+        <div class="modal-content soft-card">
+          <div class="modal-header">
+            <h5 class="modal-title text-success" id="pelaporanModalLabel"><i class="bi bi-flag me-1"></i>Form Pelaporan</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+          </div>
+          <div class="modal-body public-form-card">
 
-      <h3 class="h6 text-success mb-3"><i class="bi bi-flag me-1"></i>Form Pelaporan</h3>
+      <div class="section-kicker">Pelaporan</div>
+
+      <h3 class="h6 text-success mb-2"><i class="bi bi-flag me-1"></i>Form Pelaporan</h3>
+
+      <p class="text-muted small mb-3">Isi laporan dengan informasi yang jelas. Identitas dapat dikosongkan jika ingin mengirim sebagai anonim.</p>
 
       <?php
 
@@ -1284,12 +1796,29 @@ unset($logItem);
       <form method="post" enctype="multipart/form-data">
 
         <?= csrf_field(); ?><input type="hidden" name="action" value="lapor">
+        <input type="text" name="website" value="" tabindex="-1" autocomplete="off" class="d-none" aria-hidden="true">
 
-        <div class="row g-3">
+        <div class="form-section">
 
-          <div class="col-md-6"><label class="form-label">Nama</label><input name="nama" class="form-control" placeholder="Boleh kosong jika anonim"></div>
+          <div class="form-section-title"><i class="bi bi-person-lines-fill"></i>Identitas Pelapor</div>
 
-          <div class="col-md-6"><label class="form-label">Email</label><input name="email" type="email" class="form-control" placeholder="Boleh kosong jika anonim"></div>
+          <div class="row g-3">
+
+            <div class="col-md-6"><label class="form-label">Nama</label><input name="nama" class="form-control" placeholder="Boleh kosong jika anonim"></div>
+
+            <div class="col-md-6"><label class="form-label">Email</label><input name="email" type="email" class="form-control" placeholder="Boleh kosong jika anonim"></div>
+
+            <div class="col-12 form-check ms-2"><input class="form-check-input" type="checkbox" id="anon" name="anonim"><label class="form-check-label" for="anon">Kirim sebagai anonim</label></div>
+
+          </div>
+
+        </div>
+
+        <div class="form-section">
+
+          <div class="form-section-title"><i class="bi bi-card-text"></i>Isi Laporan</div>
+
+          <div class="row g-3">
 
           <div class="col-md-6">
 
@@ -1303,15 +1832,19 @@ unset($logItem);
 
             </select>
 
+            <div class="helper-text">Pilih kategori yang paling sesuai dengan laporan Anda.</div>
+
           </div>
 
-          <div class="col-12"><label class="form-label">Isi Laporan</label><textarea name="isi" class="form-control" rows="4" required></textarea></div>
+            <div class="col-12"><label class="form-label">Isi Laporan</label><textarea name="isi" class="form-control" rows="4" required></textarea><div class="helper-text">Jelaskan kejadian, lokasi, waktu, dan pihak terkait jika diketahui.</div></div>
 
-          <div class="col-12 form-check"><input class="form-check-input" type="checkbox" id="anon" name="anonim"><label class="form-check-label" for="anon">Kirim sebagai anonim</label></div>
+          </div>
 
+        </div>
 
+        <div class="form-section">
 
-          <div class="col-12">
+          <div class="form-section-title"><i class="bi bi-paperclip"></i>Lampiran</div>
 
             <label class="form-label">Lampiran Bukti (opsional)</label>
 
@@ -1322,32 +1855,52 @@ unset($logItem);
             accept=".pdf,image/*,video/mp4,video/webm,video/quicktime">
 
             <div class="file-hint mt-1">Format: PDF/JPG/PNG/GIF/WEBP/MP4/WEBM/MOV, maks 5MB per file. Anda bisa memilih beberapa file sekaligus.</div>
+            <div class="helper-text">Lampiran membantu proses verifikasi laporan.</div>
+
+        </div>
+
+        <div class="submit-panel">
+
+          <div>
+            <div class="form-section-title mb-1"><i class="bi bi-send-check"></i>Kirim Laporan</div>
+            <div class="form-text">Simpan <b>kode tracking</b> yang tampil setelah submit.</div>
+          </div>
+
+          <div class="d-flex flex-wrap gap-2">
+
+            <button class="btn btn-primary"><i class="bi bi-send me-1"></i>Kirim</button>
+
+            <a href="#lacak-pengaduan" class="btn btn-outline-success" data-modal-target="lacakModal"><i class="bi bi-search me-1"></i>Saya sudah punya kode</a>
 
           </div>
 
         </div>
 
-        <div class="mt-3 d-flex gap-2">
-
-          <button class="btn btn-primary"><i class="bi bi-send me-1"></i>Kirim</button>
-
-          <a href="#lacak" class="btn btn-outline-success"><i class="bi bi-search me-1"></i>Saya sudah punya kode</a>
-
-        </div>
-
-        <div class="form-text mt-2">Simpan <b>kode tracking</b> yang tampil setelah submit.</div>
-
       </form>
 
-    </section>
+          </div>
+        </div>
+      </div>
+    </div>
 
 
 
-    <!-- Lacak -->
+    <!-- Lacak Modal -->
 
-    <section id="lacak" class="soft-card p-4 mb-4">
+    <div class="modal fade" id="lacakModal" tabindex="-1" aria-labelledby="lacakModalLabel">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable public-action-modal">
+        <div class="modal-content soft-card">
+          <div class="modal-header">
+            <h5 class="modal-title text-success" id="lacakModalLabel"><i class="bi bi-search me-1"></i>Lacak Pengaduan</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+          </div>
+          <div class="modal-body public-form-card">
 
-      <h3 class="h6 text-success mb-3"><i class="bi bi-search me-1"></i>Lacak Pengaduan</h3>
+      <div class="section-kicker">Lacak Pengaduan</div>
+
+      <h3 class="h6 text-success mb-2"><i class="bi bi-search me-1"></i>Lacak Pengaduan</h3>
+
+      <p class="text-muted small mb-3">Masukkan kode tracking yang diterima setelah mengirim laporan.</p>
 
       <?php
 
@@ -1363,13 +1916,14 @@ unset($logItem);
 
 
 
-      <form method="post" class="row g-2 align-items-end">
+      <form method="post" class="row g-2 align-items-end track-panel">
 
         <?= csrf_field(); ?><input type="hidden" name="action" value="lacak">
+        <input type="text" name="website" value="" tabindex="-1" autocomplete="off" class="d-none" aria-hidden="true">
 
-        <div class="col-sm-7 col-md-6"><label class="form-label">Kode Tracking</label><input name="kode" class="form-control" placeholder="cth: SKI-20250930-ABCDE"></div>
+        <div class="col-sm-7 col-md-6"><label class="form-label">Kode Tracking</label><input name="kode" class="form-control form-control-lg" placeholder="cth: SKI-20250930-ABCDE"></div>
 
-        <div class="col-sm-5 col-md-3"><button class="btn btn-primary w-100">Lacak</button></div>
+        <div class="col-sm-5 col-md-3"><button class="btn btn-primary btn-lg w-100">Lacak</button></div>
 
       </form>
 
@@ -1471,15 +2025,29 @@ unset($logItem);
 
       <?php endif; ?>
 
-    </section>
+          </div>
+        </div>
+      </div>
+    </div>
 
 
 
-    <!-- Saran & Kritik -->
+    <!-- Saran & Kritik Modal -->
 
-    <section id="saran" class="soft-card p-4 mb-4">
+    <div class="modal fade" id="saranModal" tabindex="-1" aria-labelledby="saranModalLabel">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable public-action-modal">
+        <div class="modal-content soft-card">
+          <div class="modal-header">
+            <h5 class="modal-title text-success" id="saranModalLabel"><i class="bi bi-chat-dots me-1"></i>Saran & Kritik</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+          </div>
+          <div class="modal-body public-form-card">
 
-      <h3 class="h6 text-success mb-3"><i class="bi bi-chat-dots me-1"></i>Saran & Kritik</h3>
+      <div class="section-kicker">Saran & Kritik</div>
+
+      <h3 class="h6 text-success mb-2"><i class="bi bi-chat-dots me-1"></i>Saran & Kritik</h3>
+
+      <p class="text-muted small mb-3">Masukan Anda membantu meningkatkan mutu layanan dan tata kelola kepatuhan internal.</p>
 
       <?php
 
@@ -1498,6 +2066,7 @@ unset($logItem);
       <form method="post">
 
         <?= csrf_field(); ?><input type="hidden" name="action" value="feedback">
+        <input type="text" name="website" value="" tabindex="-1" autocomplete="off" class="d-none" aria-hidden="true">
 
         <div class="row g-3">
 
@@ -1513,7 +2082,16 @@ unset($logItem);
 
       </form>
 
-    </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-center mb-4">
+
+      <a href="#top" class="back-top-link"><i class="bi bi-arrow-up-short"></i>Kembali ke atas</a>
+
+    </div>
 
   </main>
 
@@ -1717,6 +2295,108 @@ unset($logItem);
 
         });
 
+      }
+
+      document.querySelectorAll('.caption-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var caption = btn.closest('.public-media-caption');
+          if (!caption) return;
+          var expanded = caption.classList.toggle('is-expanded');
+          btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          btn.innerHTML = expanded
+            ? 'Tutup <i class="bi bi-chevron-up"></i>'
+            : 'Baca selengkapnya <i class="bi bi-chevron-down"></i>';
+        });
+      });
+
+      document.querySelectorAll('.media-frame img').forEach(function (img) {
+        var setOrientation = function () {
+          var frame = img.closest('.media-frame');
+          if (!frame || !img.naturalWidth || !img.naturalHeight) return;
+          frame.classList.remove('media-landscape', 'media-portrait');
+          frame.classList.add(img.naturalHeight > img.naturalWidth ? 'media-portrait' : 'media-landscape');
+        };
+        if (img.complete) {
+          setOrientation();
+        } else {
+          img.addEventListener('load', setOrientation, { once: true });
+        }
+      });
+
+      var contactPanel = document.getElementById('kontak');
+      var contactToggle = document.querySelector('.contact-toggle[data-target="kontak"]');
+
+      function setContactOpen(open, shouldScroll) {
+        if (!contactPanel || !contactToggle) return;
+        contactPanel.classList.toggle('is-open', open);
+        contactPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        contactToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        contactToggle.innerHTML = open
+          ? 'Tutup Kontak <i class="bi bi-chevron-down ms-1"></i>'
+          : 'Lihat Kontak <i class="bi bi-chevron-down ms-1"></i>';
+        if (open && shouldScroll) {
+          contactPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+
+      if (contactToggle && contactPanel) {
+        contactToggle.addEventListener('click', function (event) {
+          event.preventDefault();
+          var open = !contactPanel.classList.contains('is-open');
+          setContactOpen(open, open);
+          if (open) {
+            history.replaceState(null, document.title, window.location.pathname + window.location.search + '#kontak');
+          } else {
+            history.replaceState(null, document.title, window.location.pathname + window.location.search);
+          }
+        });
+        if (window.location.hash === '#kontak') {
+          setContactOpen(true, true);
+        }
+      }
+
+      var publicModalMap = {
+        '#pelaporan': 'pelaporanModal',
+        '#lacak-pengaduan': 'lacakModal',
+        '#saran-kritik': 'saranModal'
+      };
+
+      function showPublicModal(modalId, hash) {
+        var modalNode = document.getElementById(modalId);
+        if (!modalNode || !window.bootstrap) return;
+        document.querySelectorAll('.modal.show').forEach(function (openModal) {
+          if (openModal.id !== modalId) {
+            bootstrap.Modal.getOrCreateInstance(openModal).hide();
+          }
+        });
+        bootstrap.Modal.getOrCreateInstance(modalNode).show();
+        if (hash) {
+          history.replaceState(null, document.title, window.location.pathname + window.location.search + hash);
+        }
+      }
+
+      document.querySelectorAll('[data-modal-target]').forEach(function (link) {
+        link.addEventListener('click', function (event) {
+          var target = link.getAttribute('data-modal-target');
+          var hash = link.getAttribute('href') || '';
+          if (!target) return;
+          event.preventDefault();
+          showPublicModal(target, hash.charAt(0) === '#' ? hash : '');
+        });
+      });
+
+      Object.keys(publicModalMap).forEach(function (hash) {
+        var modalNode = document.getElementById(publicModalMap[hash]);
+        if (!modalNode) return;
+        modalNode.addEventListener('hidden.bs.modal', function () {
+          if (window.location.hash === hash) {
+            history.replaceState(null, document.title, window.location.pathname + window.location.search);
+          }
+        });
+      });
+
+      if (publicModalMap[window.location.hash]) {
+        showPublicModal(publicModalMap[window.location.hash], window.location.hash);
       }
 
 
@@ -1992,5 +2672,3 @@ unset($logItem);
 </body>
 
 </html>
-
-

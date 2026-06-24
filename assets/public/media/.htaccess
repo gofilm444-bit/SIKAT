@@ -1,0 +1,5 @@
+Options -Indexes
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phar .cgi .pl .asp .aspx .jsp
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phar|cgi|pl|asp|aspx|jsp|html|htm|js|exe|bat|cmd|sh)$">
+  Require all denied
+</FilesMatch>

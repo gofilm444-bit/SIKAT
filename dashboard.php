@@ -120,6 +120,52 @@ function user_initials(string $name): string {
   }
   return $initials;
 }
+function dashboard_table_exists(mysqli $conn, string $table): bool {
+  static $cache = [];
+  if (isset($cache[$table])) return $cache[$table];
+  $tableEsc = $conn->real_escape_string($table);
+  $ok = false;
+  if ($rs = $conn->query("SHOW TABLES LIKE '{$tableEsc}'")) {
+    $ok = $rs->num_rows > 0;
+    $rs->free();
+  }
+  return $cache[$table] = $ok;
+}
+function dashboard_column_exists(mysqli $conn, string $table, string $column): bool {
+  static $cache = [];
+  $key = $table . ':' . $column;
+  if (isset($cache[$key])) return $cache[$key];
+  $tableEsc = $conn->real_escape_string($table);
+  $columnEsc = $conn->real_escape_string($column);
+  $ok = false;
+  if ($rs = $conn->query("SHOW COLUMNS FROM `{$tableEsc}` LIKE '{$columnEsc}'")) {
+    $ok = $rs->num_rows > 0;
+    $rs->free();
+  }
+  return $cache[$key] = $ok;
+}
+function dashboard_count(mysqli $conn, string $sql): int {
+  if ($rs = $conn->query($sql)) {
+    $row = $rs->fetch_assoc();
+    $rs->free();
+    return (int)($row['c'] ?? 0);
+  }
+  return 0;
+}
+function dashboard_status_badge_class(string $status): string {
+  $status = strtolower(trim($status));
+  if (in_array($status, ['selesai', 'arsip', 'closed', 'tuntas'], true)) return 'success';
+  if (in_array($status, ['proses', 'diproses', 'sedang diproses', 'tahap berjalan'], true)) return 'warning text-dark';
+  if (in_array($status, ['masuk', 'belum diproses', 'baru'], true)) return 'primary';
+  if (in_array($status, ['kembali ke pelapor', 'ditolak'], true)) return 'danger';
+  return 'secondary';
+}
+function dashboard_datetime_short(?string $value): string {
+  if (!$value) return '-';
+  $ts = strtotime($value);
+  if (!$ts) return $value;
+  return date('d M Y H:i', $ts);
+}
 $role = $role ?: strtolower($_SESSION['user']['peran'] ?? '');
 $roleRaw = $roleRaw ?: strtolower($_SESSION['user']['peran_raw'] ?? '');
 $can_manage_users = in_array($role, ['super_admin','admin'], true) || in_array($roleRaw, ['super_admin','admin'], true);
@@ -190,6 +236,70 @@ $latest=[];
 if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, created_at FROM pelaporan ORDER BY created_at DESC LIMIT 5")) {
   $latest=$ql->fetch_all(MYSQLI_ASSOC);
 }
+
+$ski = [
+  'total_review' => 0,
+  'review_berjalan' => 0,
+  'rekomendasi_aktif' => 0,
+  'tl_terlambat' => 0,
+  'risiko_tinggi' => 0,
+];
+$deadlineItems = [];
+
+if (dashboard_table_exists($conn, 'reviu')) {
+  $ski['total_review'] = dashboard_count($conn, "SELECT COUNT(*) c FROM reviu");
+  if (dashboard_column_exists($conn, 'reviu', 'status')) {
+    $ski['review_berjalan'] = dashboard_count($conn, "SELECT COUNT(*) c FROM reviu WHERE COALESCE(status,'') NOT IN ('Selesai','Arsip','Dibatalkan')");
+  }
+}
+
+if (dashboard_table_exists($conn, 'reviu_chr') && dashboard_column_exists($conn, 'reviu_chr', 'status_tl')) {
+  $ski['rekomendasi_aktif'] = dashboard_count($conn, "SELECT COUNT(*) c FROM reviu_chr WHERE COALESCE(status_tl,'') NOT IN ('Selesai','Sudah TL','Tuntas','Closed')");
+  if (dashboard_column_exists($conn, 'reviu_chr', 'due_date')) {
+    $ski['tl_terlambat'] = dashboard_count($conn, "SELECT COUNT(*) c FROM reviu_chr WHERE due_date < CURDATE() AND COALESCE(status_tl,'') NOT IN ('Selesai','Sudah TL','Tuntas','Closed')");
+    if ($qd = $conn->query("SELECT id, rekomendasi, status_tl, due_date FROM reviu_chr WHERE due_date IS NOT NULL AND COALESCE(status_tl,'') NOT IN ('Selesai','Sudah TL','Tuntas','Closed') ORDER BY due_date ASC LIMIT 4")) {
+      while ($row = $qd->fetch_assoc()) {
+        $deadlineItems[] = [
+          'title' => trim((string)($row['rekomendasi'] ?? 'Rekomendasi tindak lanjut')),
+          'meta' => 'Deadline ' . dashboard_datetime_short((string)($row['due_date'] ?? '')),
+          'status' => (string)($row['status_tl'] ?? 'Belum TL'),
+          'href' => 'review.php',
+        ];
+      }
+      $qd->free();
+    }
+  }
+}
+
+if (empty($deadlineItems) && dashboard_table_exists($conn, 'reviu') && dashboard_column_exists($conn, 'reviu', 'tgl_deadline')) {
+  if ($qd = $conn->query("SELECT kode, status, tgl_deadline FROM reviu WHERE tgl_deadline IS NOT NULL AND COALESCE(status,'') NOT IN ('Selesai','Arsip','Dibatalkan') ORDER BY tgl_deadline ASC LIMIT 4")) {
+    while ($row = $qd->fetch_assoc()) {
+      $deadlineItems[] = [
+        'title' => 'Review ' . ((string)($row['kode'] ?? '') ?: 'Internal'),
+        'meta' => 'Deadline ' . dashboard_datetime_short((string)($row['tgl_deadline'] ?? '')),
+        'status' => (string)($row['status'] ?? 'Terjadwal'),
+        'href' => 'review.php',
+      ];
+    }
+    $qd->free();
+  }
+}
+
+if (dashboard_table_exists($conn, 'risiko') && dashboard_column_exists($conn, 'risiko', 'tingkat')) {
+  $where = "LOWER(tingkat) IN ('tinggi','ekstrem','extreme')";
+  if (dashboard_column_exists($conn, 'risiko', 'status')) {
+    $where .= " AND COALESCE(status,'Aktif') = 'Aktif'";
+  }
+  $ski['risiko_tinggi'] = dashboard_count($conn, "SELECT COUNT(*) c FROM risiko WHERE {$where}");
+}
+
+$insights = [
+  'review' => $ski['review_berjalan'] > 0 ? number_format($ski['review_berjalan']) . ' review masih berjalan' : 'Belum ada review berjalan',
+  'rekomendasi' => $ski['rekomendasi_aktif'] > 0 ? 'Rekomendasi aktif perlu dipantau' : 'Tidak ada rekomendasi aktif',
+  'terlambat' => $ski['tl_terlambat'] > 0 ? number_format($ski['tl_terlambat']) . ' tindak lanjut melewati deadline' : 'Tidak ada tindak lanjut terlambat',
+  'risiko' => $ski['risiko_tinggi'] > 0 ? number_format($ski['risiko_tinggi']) . ' risiko prioritas tinggi' : 'Tidak ada risiko tinggi aktif',
+  'pelaporan' => $sum['proses'] > 0 ? number_format($sum['proses']) . ' laporan masih tahap berjalan' : 'Tidak ada laporan tahap berjalan',
+];
 ?>
 <!doctype html>
 <html lang="id">
@@ -208,7 +318,7 @@ if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, creat
     }
     body{ background:var(--soft); color:#174a3a; }
     .hero{
-      text-align:center; padding:24px 12px 12px; position:relative;
+      text-align:center; padding:10px 12px 4px; position:relative;
     }
     .profile-area{
       position:absolute; top:12px; left:12px; z-index:60;
@@ -240,29 +350,105 @@ if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, creat
       .profile-btn{ width:34px; height:34px; }
     }
     .brand-logo{
-      height:70px; width:auto; margin-bottom:2px;
+      width:129px; height:auto; max-height:96px; object-fit:contain; aspect-ratio:auto; margin-bottom:0;
     }
     .title{
-      font-weight:800; color:#0f9152; text-shadow:0 1px 0 #fff; font-size:1.6rem; letter-spacing:.2px;
+      font-weight:800; color:#0f9152; text-shadow:0 1px 0 #fff; font-size:1.42rem; letter-spacing:.2px;
     }
-    .subtitle{ color:#5f6e64; max-width:720px; margin:4px auto 0; font-size:.95rem; line-height:1.4; }
+    .subtitle{ color:#5f6e64; max-width:720px; margin:2px auto 0; font-size:.9rem; line-height:1.35; }
+    .hero-greeting{ color:#315b4d; margin-bottom:.35rem; }
+    .sikat-hero{
+      display:grid; grid-template-columns:140px minmax(0, 1fr);
+      grid-template-areas:"logo title" "logo subtitle" "logo greeting" "actions actions";
+      align-items:center; column-gap:14px; row-gap:0; max-width:1140px;
+      text-align:left; padding-top:8px; padding-bottom:3px;
+    }
+    .sikat-hero .hero-logo{
+      grid-area:logo; width:129px; height:auto; max-width:135px; max-height:96px;
+      object-fit:contain; aspect-ratio:auto; margin:0; justify-self:end;
+    }
+    .sikat-hero .hero-title{
+      grid-area:title; margin:0 0 2px !important; line-height:1.18;
+    }
+    .sikat-hero .hero-subtitle{
+      grid-area:subtitle; margin:0; max-width:760px;
+    }
+    .sikat-hero .hero-greeting{
+      grid-area:greeting; margin:.12rem 0 0 !important; font-size:.9rem;
+    }
+    .sikat-hero .sikat-quick-actions{
+      grid-area:actions; justify-self:center; margin-top:6px !important; margin-bottom:0;
+    }
     .menu-bar{
-      background:#e8f5ec; border:1px solid var(--border); border-radius:10px; padding:10px;
+      background:#fff; border:1px solid var(--border); border-radius:12px; padding:8px;
+      box-shadow:0 6px 16px rgba(20,92,61,.08);
     }
     .menu-bar .btn{
-      background:#0f9152; border:0; color:#fff; font-weight:600; border-radius:10px;
-      padding:.45rem .85rem; font-size:.92rem;
+      background:#0f9152; border:0; color:#fff; font-weight:700; border-radius:9px;
+      padding:.48rem .75rem; font-size:.88rem; display:inline-flex; align-items:center; gap:.4rem;
     }
     .menu-bar .btn:focus-visible{ outline:2px solid #f0c300; outline-offset:2px; box-shadow:0 0 0 2px rgba(33,136,56,.35); }
     .menu-bar .btn:hover{ background:#0d7b45; }
     .menu-bar .btn-outline-danger{ background:#dc3545; }
-    .divider{ height:2px; background:#cfe7da; margin:14px 0 12px; }
+    .divider{ height:1px; background:#cfe7da; margin:5px 0 9px; }
     /* Cards */
-    .card-soft{ background:#fff; border:1px solid var(--border); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.05); }
-    .kpi{ border-radius:10px; border:1px solid var(--border); padding:6px 8px; background:#fff; box-shadow:0 2px 6px rgba(0,0,0,.04); min-height:64px; display:flex; flex-direction:column; justify-content:center; gap:2px; }
-    .kpi small{ color:#6b7280; font-size:.76rem; letter-spacing:.2px; }
-    .kpi h3{ font-size:1.05rem; line-height:1.2; font-variant-numeric: tabular-nums; }
+    .card-soft{ background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 12px rgba(0,0,0,.05); }
+    .section-title{ font-size:.95rem; font-weight:800; color:#124b38; margin-bottom:.75rem; }
+    .kpi{ border-radius:10px; border:1px solid var(--border); padding:10px 12px; background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.04); min-height:92px; display:flex; flex-direction:column; justify-content:space-between; gap:4px; }
+    .kpi small{ color:#5f6e64; font-size:.76rem; letter-spacing:.2px; font-weight:700; }
+    .kpi h3{ font-size:1.35rem; line-height:1.05; font-variant-numeric: tabular-nums; color:#0b3d2e; }
+    .kpi .insight{ color:#69746e; font-size:.76rem; line-height:1.25; min-height:1.9em; }
+    .kpi.ski{ border-top:3px solid #0f9152; }
+    .kpi.report{ border-top:3px solid #d7ad00; }
+    .chart-box{ min-height:300px; }
+    .status-chart-box{ min-height:300px; display:flex; align-items:center; justify-content:center; }
+    #statusPie{ max-width:220px !important; max-height:220px !important; margin:0 auto; }
+    .category-list{ display:flex; flex-direction:column; gap:10px; }
+    .category-row{ display:grid; grid-template-columns:minmax(120px,1fr) minmax(130px,2fr) 42px; align-items:center; gap:10px; font-size:.9rem; }
+    .category-label{ color:#174a3a; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .category-track{ height:10px; background:#eef6f1; border-radius:999px; overflow:hidden; }
+    .category-fill{ height:100%; min-width:4px; background:#0f9152; border-radius:999px; }
+    .category-count{ color:#5f6e64; text-align:right; font-variant-numeric:tabular-nums; }
+    .activity-list{ display:flex; flex-direction:column; gap:10px; }
+    .activity-item{ border:1px solid #edf3ef; border-radius:9px; padding:10px; background:#fbfdfc; }
+    .activity-title{ font-weight:700; color:#174a3a; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .activity-meta{ color:#6b7280; font-size:.82rem; margin-top:4px; }
+    .latest-table th{ white-space:nowrap; font-size:.82rem; color:#315b4d; }
+    .latest-table td{ vertical-align:top; font-size:.9rem; }
+    .latest-table .col-code{ min-width:118px; }
+    .latest-table .col-summary{ min-width:260px; }
+    .summary-text{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; line-height:1.35; color:#4a5f55; }
+    .detail-link{ font-weight:700; font-size:.82rem; text-decoration:none; }
+    .empty-state{ padding:22px; text-align:center; color:#607066; background:#fbfdfc; border:1px dashed #cfe7da; border-radius:10px; }
+    .empty-state .hint{ color:#7b8a82; font-size:.86rem; margin-top:2px; }
     .table thead th{ background:#f2f8f4; }
+    @media (max-width: 768px){
+      .sikat-hero{
+        display:block; text-align:center; padding-top:9px; padding-bottom:5px;
+      }
+      .sikat-hero .hero-logo{
+        width:114px; height:auto; max-width:123px; max-height:87px; margin:0 auto 5px;
+      }
+      .sikat-hero .hero-title{
+        margin-bottom:3px !important;
+      }
+      .sikat-hero .hero-subtitle{
+        margin:0 auto; max-width:640px;
+      }
+      .sikat-hero .hero-greeting{
+        margin:.25rem 0 .25rem !important;
+      }
+      .sikat-hero .sikat-quick-actions{
+        margin-top:5px !important;
+      }
+      .category-row{ grid-template-columns:1fr 36px; }
+      .category-track{ grid-column:1 / -1; grid-row:2; }
+    }
+    @media (max-width: 576px){
+      .sikat-hero .hero-logo{ width:105px; height:auto; max-width:114px; max-height:81px; }
+      .sikat-hero .hero-title{ font-size:1.26rem; }
+      .sikat-hero .hero-subtitle{ font-size:.84rem; line-height:1.28; }
+    }
   </style>
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 </head>
@@ -272,17 +458,21 @@ if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, creat
 <!-- ====== HEADER + MENU (sesuai screenshot) ====== -->
 <section class="hero container sikat-hero">
   <img class="brand-logo hero-logo" src="/ski_new/asset/logo-sikat-baru-140.png" alt="SIKAT">
-  <h2 class="title mt-2 hero-title">Dashboard SIKAT</h2>
-  <p class="subtitle hero-subtitle">Sistem Informasi Kepatuhan Internal Poltekkes Ternate (SIKAT).</p>
-  <p class="mt-2 fw-semibold hero-greeting">Halo, <?= e($_SESSION['user']['nama'] ?? 'Pengguna') ?>!</p>
+  <h2 class="title mt-1 hero-title">Dashboard SIKAT</h2>
+  <p class="subtitle hero-subtitle">Ringkasan eksekutif SKI, kepatuhan internal, risiko, tindak lanjut, dan pelaporan Poltekkes Ternate.</p>
+  <p class="mt-1 fw-semibold hero-greeting">Halo, <?= e($_SESSION['user']['nama'] ?? 'Pengguna') ?>!</p>
 
-  <div class="menu-bar d-inline-block mt-2 sikat-quick-actions">
+  <div class="menu-bar d-inline-block mt-1 sikat-quick-actions">
     <div class="d-flex flex-wrap gap-2 justify-content-center quick-actions-row">
-      <a href="kebijakan.php" class="btn sikat-quick-btn">Kebijakan &amp; Regulasi</a>
-      <a href="review.php" class="btn sikat-quick-btn">Review Internal</a>
-      <a href="pelaporan.php" class="btn sikat-quick-btn">Pelaporan</a>
-      <a href="risiko.php" class="btn sikat-quick-btn">Risiko</a>
-      <a href="self_assessment.php" class="btn sikat-quick-btn">Self-Assessment</a>
+      <a href="kebijakan.php" class="btn sikat-quick-btn"><i class="bi bi-journal-check"></i> Kebijakan</a>
+      <a href="review.php" class="btn sikat-quick-btn"><i class="bi bi-clipboard2-check"></i> Review Internal</a>
+      <a href="pelaporan.php" class="btn sikat-quick-btn"><i class="bi bi-inbox"></i> Pelaporan</a>
+      <a href="risiko.php" class="btn sikat-quick-btn"><i class="bi bi-shield-exclamation"></i> Risiko</a>
+      <a href="self_assessment.php" class="btn sikat-quick-btn"><i class="bi bi-ui-checks-grid"></i> Self-Assessment</a>
+      <?php if ($can_manage_users): ?>
+        <a href="public_media.php" class="btn sikat-quick-btn"><i class="bi bi-images"></i> Kelola Media Publik</a>
+        <a href="public_contacts.php" class="btn sikat-quick-btn"><i class="bi bi-person-lines-fill"></i> Kelola Kontak Publik</a>
+      <?php endif; ?>
     </div>
   </div>
 </section>
@@ -293,60 +483,129 @@ if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, creat
 
 <main class="container mb-5">
 
-  <!-- KPI Ringkas -->
+  <!-- KPI SKI -->
   <div class="row g-3 mb-3">
-    <div class="col-md-3"><div class="kpi"><small>Total Pengaduan</small><h3 class="m-0"><?= number_format($sum['total']) ?></h3></div></div>
-    <div class="col-md-3"><div class="kpi"><small>Pengaduan Masuk</small><h3 class="m-0"><?= number_format($sum['masuk']) ?></h3></div></div>
-    <div class="col-md-3"><div class="kpi"><small>Tahap Berjalan</small><h3 class="m-0"><?= number_format($sum['proses']) ?></h3></div></div>
-    <div class="col-md-3"><div class="kpi"><small>Arsip</small><h3 class="m-0"><?= number_format($sum['arsip']) ?></h3></div></div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="kpi ski">
+        <small>Total Review Internal</small>
+        <h3 class="m-0"><?= number_format($ski['total_review']) ?></h3>
+        <div class="insight"><?= e($insights['review']) ?></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="kpi ski">
+        <small>Rekomendasi Aktif</small>
+        <h3 class="m-0"><?= number_format($ski['rekomendasi_aktif']) ?></h3>
+        <div class="insight"><?= e($insights['rekomendasi']) ?></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="kpi ski">
+        <small>TL Terlambat</small>
+        <h3 class="m-0"><?= number_format($ski['tl_terlambat']) ?></h3>
+        <div class="insight"><?= e($insights['terlambat']) ?></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="kpi ski">
+        <small>Risiko Tinggi / Ekstrem</small>
+        <h3 class="m-0"><?= number_format($ski['risiko_tinggi']) ?></h3>
+        <div class="insight"><?= e($insights['risiko']) ?></div>
+      </div>
+    </div>
   </div>
-  <p class="text-muted small">Kembali ke pelapor: <?= number_format($sum['kembali']) ?> laporan.</p>
+
+  <!-- KPI Pelaporan -->
+  <div class="row g-3 mb-3">
+    <div class="col-sm-6 col-xl-3"><div class="kpi report"><small>Total Pengaduan</small><h3 class="m-0"><?= number_format($sum['total']) ?></h3><div class="insight"><?= e($insights['pelaporan']) ?></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="kpi report"><small>Pengaduan Masuk</small><h3 class="m-0"><?= number_format($sum['masuk']) ?></h3><div class="insight"><?= $sum['masuk'] > 0 ? 'Perlu triase awal' : 'Tidak ada pengaduan baru' ?></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="kpi report"><small>Tahap Berjalan</small><h3 class="m-0"><?= number_format($sum['proses']) ?></h3><div class="insight"><?= $sum['proses'] > 0 ? 'Pantau progres penyelesaian' : 'Tidak ada proses aktif' ?></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="kpi report"><small>Arsip</small><h3 class="m-0"><?= number_format($sum['arsip']) ?></h3><div class="insight">Kembali ke pelapor: <?= number_format($sum['kembali']) ?></div></div></div>
+  </div>
 
   <div class="row g-3">
     <!-- Tren Bulanan -->
     <div class="col-lg-8">
-      <div class="card-soft p-3">
-        <h6 class="mb-3">Tren Laporan 12 Bulan Terakhir</h6>
-        <canvas id="trend"></canvas>
+      <div class="card-soft p-3 chart-box">
+        <h6 class="section-title">Tren Laporan 12 Bulan Terakhir</h6>
+        <canvas id="trend" height="120"></canvas>
       </div>
     </div>
 
     <!-- Distribusi Status -->
     <div class="col-lg-4">
-      <div class="card-soft p-3">
-        <h6 class="mb-3">Distribusi Status</h6>
-        <canvas id="statusPie"></canvas>
+      <div class="card-soft p-3 status-chart-box">
+        <div class="w-100">
+          <h6 class="section-title">Distribusi Status</h6>
+          <canvas id="statusPie"></canvas>
+        </div>
       </div>
     </div>
 
     <!-- Top Kategori -->
     <div class="col-lg-6">
       <div class="card-soft p-3">
-        <h6 class="mb-3">Top 5 Kategori</h6>
-        <canvas id="kategoriBar"></canvas>
+        <h6 class="section-title">Top 5 Kategori Pelaporan</h6>
+        <?php $maxCat = !empty($cat_counts) ? max($cat_counts) : 0; ?>
+        <?php if ($maxCat <= 0): ?>
+          <div class="empty-state">Belum ada data kategori.<div class="hint">Kategori akan muncul setelah laporan masuk.</div></div>
+        <?php else: ?>
+          <div class="category-list">
+            <?php foreach ($cat_labels as $idx => $label): $count = (int)($cat_counts[$idx] ?? 0); $pct = $maxCat > 0 ? max(4, (int)round(($count / $maxCat) * 100)) : 0; ?>
+              <div class="category-row">
+                <div class="category-label" title="<?= e($label) ?>"><?= e($label ?: 'Tanpa kategori') ?></div>
+                <div class="category-track" aria-hidden="true"><div class="category-fill" style="width:<?= $pct ?>%"></div></div>
+                <div class="category-count"><?= number_format($count) ?></div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+      </div>
+    </div>
+
+    <!-- Aktivitas Penting -->
+    <div class="col-lg-6">
+      <div class="card-soft p-3">
+        <h6 class="section-title">Deadline Tindak Lanjut / Aktivitas Penting</h6>
+        <?php if (empty($deadlineItems)): ?>
+          <div class="empty-state">Belum ada deadline tindak lanjut aktif.<div class="hint">Aktivitas review dan rekomendasi akan tampil di sini.</div></div>
+        <?php else: ?>
+          <div class="activity-list">
+            <?php foreach ($deadlineItems as $item): ?>
+              <div class="activity-item">
+                <div class="d-flex justify-content-between gap-2">
+                  <div class="activity-title"><?= e($item['title'] ?: 'Aktivitas tindak lanjut') ?></div>
+                  <span class="badge bg-<?= dashboard_status_badge_class($item['status']) ?> align-self-start"><?= e($item['status']) ?></span>
+                </div>
+                <div class="activity-meta"><?= e($item['meta']) ?> · <a class="detail-link" href="<?= e($item['href']) ?>">Buka Review</a></div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
       </div>
     </div>
 
     <!-- 5 Terbaru -->
-    <div class="col-lg-6">
+    <div class="col-12">
       <div class="card-soft p-3">
-        <h6 class="mb-3">5 Laporan Terbaru</h6>
+        <h6 class="section-title">5 Laporan Terbaru</h6>
         <div class="table-responsive">
-          <table class="table align-middle">
-            <thead><tr><th>Kode</th><th>Kategori</th><th>Status</th><th>Waktu</th><th>Ringkas</th></tr></thead>
+          <table class="table latest-table align-middle mb-0">
+            <thead><tr><th class="col-code">Kode</th><th>Kategori</th><th>Status</th><th>Waktu</th><th class="col-summary">Ringkas</th><th>Aksi</th></tr></thead>
             <tbody>
               <?php if(empty($latest)): ?>
-                <tr><td colspan="5"><div class="empty-state">Tidak ada data ditemukan.<div class="hint">Coba ubah filter/pencarian.</div></div></td></tr>
+                <tr><td colspan="6"><div class="empty-state">Belum ada laporan terbaru.<div class="hint">Laporan akan tampil setelah pelaporan diterima.</div></div></td></tr>
               <?php else: foreach($latest as $r): ?>
                 <tr>
                   <td><a href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>" class="text-decoration-none"><?= e($r['kode']) ?></a></td>
                   <td><?= e($r['kategori']) ?></td>
                   <td>
-                    <?php $st=$r['status']; $cls=$st==='Selesai'?'success':($st==='Proses'?'warning text-dark':'secondary'); ?>
+                    <?php $st=$r['status']; $cls=dashboard_status_badge_class((string)$st); ?>
                     <span class="badge bg-<?= $cls ?>"><?= e($st) ?></span>
                   </td>
-                  <td><?= e($r['created_at']) ?></td>
-                  <td><?= nl2br(e($r['isi_short'])) ?></td>
+                  <td><?= e(dashboard_datetime_short($r['created_at'] ?? '')) ?></td>
+                  <td><div class="summary-text"><?= nl2br(e($r['isi_short'] ?: 'Tidak ada ringkasan')) ?></div></td>
+                  <td><a href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>" class="detail-link">Lihat Detail</a></td>
                 </tr>
               <?php endforeach; endif; ?>
             </tbody>
@@ -385,8 +644,6 @@ const trendLabels = <?= json_encode($trend_labels, JSON_UNESCAPED_UNICODE) ?>;
 const trendCounts = <?= json_encode($trend_counts, JSON_UNESCAPED_UNICODE) ?>;
 const statusLabels = <?= json_encode(array_keys($dist), JSON_UNESCAPED_UNICODE) ?>;
 const statusCounts = <?= json_encode(array_values($dist), JSON_UNESCAPED_UNICODE) ?>;
-const catLabels = <?= json_encode($cat_labels, JSON_UNESCAPED_UNICODE) ?>;
-const catCounts = <?= json_encode($cat_counts, JSON_UNESCAPED_UNICODE) ?>;
 
 // Line: Tren bulanan
 if (document.getElementById('trend')) {
@@ -406,14 +663,6 @@ if (document.getElementById('statusPie')) {
   });
 }
 
-// Bar: Top kategori
-if (document.getElementById('kategoriBar')) {
-  new Chart(document.getElementById('kategoriBar'), {
-    type: 'bar',
-    data: { labels: catLabels, datasets: [{ label:'Jumlah', data: catCounts }] },
-    options: { responsive:true, plugins:{ legend:{display:false} }, scales:{ y:{ beginAtZero:true, precision:0 } } }
-  });
-}
 </script>
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
 </body>

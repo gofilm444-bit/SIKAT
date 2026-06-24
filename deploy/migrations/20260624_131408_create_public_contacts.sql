@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS public_contacts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  contact_name VARCHAR(150) NULL,
+  description TEXT NULL,
+  whatsapp VARCHAR(40) NULL,
+  phone VARCHAR(40) NULL,
+  email VARCHAR(150) NULL,
+  address TEXT NULL,
+  service_hours VARCHAR(150) NULL,
+  maps_url VARCHAR(255) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_active (is_active, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

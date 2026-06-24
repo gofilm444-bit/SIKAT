@@ -60,6 +60,7 @@ $user = $_SESSION['user'] ?? [];
 $displayName = $user['nama'] ?? ($user['username'] ?? 'User');
 $role = strtolower($user['peran'] ?? '');
 $roleRaw = strtolower($user['peran_raw'] ?? $role);
+$roleLabel = $user['peran_raw'] ?? ($user['peran'] ?? 'User');
 $showAdminItems = in_array($role, ['super_admin', 'admin'], true) || in_array($roleRaw, ['super_admin', 'admin'], true);
 $initials = topbar_initials((string)$displayName);
 
@@ -130,6 +131,11 @@ $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_
         <span class="sikat-avatar-badge" aria-hidden="true"><?= htmlspecialchars($initials, ENT_QUOTES, 'UTF-8') ?></span>
       </button>
       <div class="topbar-menu" id="topbarMenu" role="menu" aria-labelledby="topbarMenuButton">
+        <div class="topbar-user-card" aria-label="Profil pengguna">
+          <div class="topbar-user-name"><?= htmlspecialchars((string)$displayName, ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="topbar-user-role"><?= htmlspecialchars((string)$roleLabel, ENT_QUOTES, 'UTF-8') ?></div>
+        </div>
+        <div class="topbar-divider"></div>
 
         <?php if ($akses_dashboard === 1): ?>
           <a href="dashboard.php" role="menuitem">Dashboard</a>
@@ -148,7 +154,10 @@ $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_
         <?php endif; ?>
 
         <a href="settings.php" role="menuitem">Pengaturan</a>
+        <a href="settings.php#ubah-password" role="menuitem">Ubah Password</a>
         <?php if ($showAdminItems): ?>
+          <a href="public_media.php" role="menuitem">Kelola Media Publik</a>
+          <a href="public_contacts.php" role="menuitem">Kelola Kontak Publik</a>
           <a href="pengguna.php" role="menuitem">Pengguna</a>
           <a href="mail_recipients.php" role="menuitem">Penerima Email</a>
         <?php endif; ?>
