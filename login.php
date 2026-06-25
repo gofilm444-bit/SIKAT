@@ -1100,23 +1100,55 @@ function login_table_exists(mysqli $conn, string $table): bool {
   return $cache[$table] = $ok;
 }
 
+function login_column_exists(mysqli $conn, string $table, string $column): bool {
+  static $cache = [];
+  $key = $table . '.' . $column;
+  if (isset($cache[$key])) return $cache[$key];
+  $tableEsc = $conn->real_escape_string($table);
+  $columnEsc = $conn->real_escape_string($column);
+  $ok = false;
+  if ($rs = $conn->query("SHOW COLUMNS FROM `{$tableEsc}` LIKE '{$columnEsc}'")) {
+    $ok = $rs->num_rows > 0;
+    $rs->free();
+  }
+  return $cache[$key] = $ok;
+}
+
 $publicMediaBase = __DIR__ . '/assets/public';
 $publicMediaUrl = '/ski_new/assets/public';
 $publicMediaSlides = [];
 
 if (login_table_exists($conn, 'public_media')) {
-  if ($qm = $conn->query("SELECT title, caption, file_path, media_type FROM public_media WHERE is_active = 1 ORDER BY sort_order ASC, id DESC")) {
+  $publicMediaColumns = ['title', 'caption', 'file_path', 'media_type'];
+  foreach (['thumbnail_path', 'auto_slide', 'slide_interval'] as $optionalColumn) {
+    if (login_column_exists($conn, 'public_media', $optionalColumn)) {
+      $publicMediaColumns[] = $optionalColumn;
+    }
+  }
+  $publicMediaSelect = implode(', ', array_map(static function ($column) {
+    return '`' . $column . '`';
+  }, $publicMediaColumns));
+  if ($qm = $conn->query("SELECT {$publicMediaSelect} FROM public_media WHERE is_active = 1 ORDER BY sort_order ASC, id DESC")) {
     while ($media = $qm->fetch_assoc()) {
       $relPath = trim((string)($media['file_path'] ?? ''));
       $mediaType = strtolower(trim((string)($media['media_type'] ?? '')));
       if ($relPath === '' || !in_array($mediaType, ['image', 'video'], true)) continue;
       $fullPath = __DIR__ . '/' . ltrim(str_replace(['\\', '..'], ['/', ''], $relPath), '/');
       if (!is_file($fullPath)) continue;
+      $thumbnailPath = trim((string)($media['thumbnail_path'] ?? ''));
+      $thumbnailFullPath = $thumbnailPath !== '' ? __DIR__ . '/' . ltrim(str_replace(['\\', '..'], ['/', ''], $thumbnailPath), '/') : '';
+      $autoSlide = isset($media['auto_slide']) ? (int)$media['auto_slide'] : 1;
+      $slideInterval = isset($media['slide_interval']) ? (int)$media['slide_interval'] : 6500;
+      if ($slideInterval < 3000) $slideInterval = 3000;
+      if ($slideInterval > 30000) $slideInterval = 30000;
       $publicMediaSlides[] = [
         'type' => $mediaType,
         'src' => '/ski_new/' . ltrim(str_replace('\\', '/', $relPath), '/'),
+        'thumbnail' => ($thumbnailPath !== '' && is_file($thumbnailFullPath)) ? '/ski_new/' . ltrim(str_replace('\\', '/', $thumbnailPath), '/') : '',
         'title' => trim((string)($media['title'] ?? '')),
         'caption' => trim((string)($media['caption'] ?? '')),
+        'auto_slide' => $autoSlide === 1 ? 1 : 0,
+        'interval' => $slideInterval,
       ];
     }
     $qm->free();
@@ -1135,8 +1167,11 @@ if (empty($publicMediaSlides)) {
       $publicMediaSlides[] = [
         'type' => $media['type'],
         'src' => $media['src'],
+        'thumbnail' => '',
         'title' => 'Media edukasi SIKAT',
         'caption' => '',
+        'auto_slide' => 1,
+        'interval' => 6500,
       ];
       break;
     }
@@ -1421,6 +1456,336 @@ if (login_table_exists($conn, 'public_social_links')) {
 
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 
+<style>
+/* SIKAT_MANUAL_MEDIA_CENTER_DOTS_LIGHTBOX_CSS */
+.public-media .carousel-item,
+.public-media .media-frame,
+.public-media .media-preview-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.public-media .carousel-item {
+  flex-direction: column;
+}
+
+.public-media .media-frame {
+  width: 100%;
+  overflow: hidden;
+}
+
+.public-media .media-preview-trigger {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  position: relative;
+}
+
+.public-media .media-frame img,
+.public-media .media-frame video,
+.public-media .media-preview-trigger img,
+.public-media .media-preview-trigger video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.public-media .media-frame.media-portrait img,
+.public-media .media-frame.media-portrait video {
+  width: auto !important;
+  height: 100% !important;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.sikat-video-preview-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.sikat-video-preview-play span {
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 92, 55, .86);
+  color: #fff;
+  box-shadow: 0 14px 34px rgba(0,0,0,.22);
+  border: 2px solid rgba(255, 210, 64, .9);
+  font-size: 1.65rem;
+}
+
+.sikat-media-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 10px 12px 0;
+  width: 100%;
+}
+
+.sikat-media-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(0, 105, 63, .45);
+  background: rgba(221, 244, 232, .9);
+  cursor: pointer;
+  transition: all .25s ease;
+  padding: 0;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.75);
+}
+
+.sikat-media-dot.active {
+  width: 30px;
+  background: linear-gradient(135deg, #006b3f, #0da85d);
+  border-color: #d8a31a;
+  box-shadow: 0 0 0 3px rgba(216, 163, 26, .20), 0 8px 18px rgba(0, 90, 50, .20);
+}
+
+.sikat-media-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(5, 32, 22, .76);
+  backdrop-filter: blur(4px);
+}
+
+.sikat-media-lightbox.is-open {
+  display: flex;
+}
+
+.sikat-media-lightbox-dialog {
+  width: min(94vw, 1040px);
+  max-height: 90vh;
+  background: #fff;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 22px 70px rgba(0,0,0,.35);
+  border: 1px solid rgba(201, 232, 216, .9);
+}
+
+.sikat-media-lightbox-dialog.is-portrait {
+  width: min(94vw, 520px);
+}
+
+.sikat-media-lightbox-dialog.is-square {
+  width: min(94vw, 720px);
+}
+
+.sikat-media-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #f6fbf8;
+  border-bottom: 1px solid #dcefe4;
+}
+
+.sikat-media-lightbox-title {
+  margin: 0;
+  color: #063f2b;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.sikat-media-lightbox-close {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid #cfe7da;
+  background: #fff;
+  color: #063f2b;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sikat-media-lightbox-body {
+  background: #061f17;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 72vh;
+}
+
+.sikat-media-lightbox-dialog.is-portrait .sikat-media-lightbox-body {
+  background: #061f17;
+}
+
+.sikat-media-lightbox-body img,
+.sikat-media-lightbox-body video {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  display: block;
+}
+
+.sikat-media-lightbox-dialog.is-portrait .sikat-media-lightbox-body video,
+.sikat-media-lightbox-dialog.is-portrait .sikat-media-lightbox-body img {
+  width: auto;
+  max-width: 100%;
+  height: min(72vh, 760px);
+}
+
+.sikat-media-lightbox-caption {
+  padding: 13px 18px 16px;
+  color: #456155;
+  line-height: 1.5;
+  max-height: 110px;
+  overflow: auto;
+}
+
+body.sikat-lightbox-open {
+  overflow: hidden;
+}
+
+@media (max-width: 576px) {
+  .sikat-media-lightbox {
+    padding: 10px;
+  }
+
+  .sikat-media-lightbox-dialog,
+  .sikat-media-lightbox-dialog.is-portrait,
+  .sikat-media-lightbox-dialog.is-square {
+    width: 94vw;
+  }
+
+  .sikat-media-lightbox-body,
+  .sikat-media-lightbox-body img,
+  .sikat-media-lightbox-body video {
+    max-height: 68vh;
+  }
+}
+</style>
+<style>
+/* SIKAT_FIX_DOTS_AND_CENTER_MEDIA_20260625 */
+.public-media {
+  display: block !important;
+  position: relative;
+}
+
+.public-media .carousel {
+  width: 100% !important;
+  position: relative;
+}
+
+.public-media .carousel-inner {
+  width: 100% !important;
+}
+
+.public-media .carousel-item {
+  width: 100% !important;
+}
+
+.public-media .carousel-item.active,
+.public-media .carousel-item-next,
+.public-media .carousel-item-prev {
+  display: block !important;
+}
+
+.public-media .media-frame {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+}
+
+.public-media .media-preview-trigger {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 auto !important;
+}
+
+.public-media .media-frame img,
+.public-media .media-frame video,
+.public-media .media-preview-trigger img,
+.public-media .media-preview-trigger video {
+  display: block !important;
+  object-fit: contain !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.public-media .media-frame.media-portrait img,
+.public-media .media-frame.media-portrait video,
+.public-media .media-frame.media-portrait .media-preview-trigger img,
+.public-media .media-frame.media-portrait .media-preview-trigger video {
+  width: auto !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  object-fit: contain !important;
+}
+
+.public-media .media-frame.media-landscape img,
+.public-media .media-frame.media-landscape video,
+.public-media .media-frame.media-landscape .media-preview-trigger img,
+.public-media .media-frame.media-landscape .media-preview-trigger video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+
+.public-media .sikat-media-dots {
+  position: absolute !important;
+  left: 50% !important;
+  bottom: 14px !important;
+  transform: translateX(-50%) !important;
+  z-index: 20 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 9px !important;
+  padding: 7px 10px !important;
+  width: auto !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.72) !important;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 8px 24px rgba(0, 60, 34, .14);
+}
+
+.public-media .sikat-media-dot {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 999px !important;
+  border: 2px solid rgba(0, 105, 63, .55) !important;
+  background: rgba(230, 247, 238, .95) !important;
+  cursor: pointer !important;
+  transition: all .25s ease !important;
+  padding: 0 !important;
+}
+
+.public-media .sikat-media-dot.active {
+  width: 32px !important;
+  background: linear-gradient(135deg, #006b3f, #0da85d) !important;
+  border-color: #d8a31a !important;
+  box-shadow: 0 0 0 3px rgba(216,163,26,.22), 0 8px 18px rgba(0,90,50,.22) !important;
+}
+
+.public-media-caption {
+  width: 100% !important;
+}
+</style>
 </head>
 
 <body class="public-page">
@@ -1438,7 +1803,7 @@ if (login_table_exists($conn, 'public_social_links')) {
         </span>
 
         <div class="brand-title">Sistem Informasi Kepatuhan Internal Poltekkes Ternate (SIKAT)</div>
-        <span class="sikat-version-badge">SIKAT v2.0</span>
+        <span class="sikat-version-badge">SIKAT v3.0</span>
 
       </div>
 
@@ -1562,7 +1927,11 @@ if (login_table_exists($conn, 'public_social_links')) {
 
             <?php if (!empty($publicMediaSlides)): ?>
 
-              <div id="publicMediaCarousel" class="carousel slide" data-bs-ride="carousel" data-bs-interval="6500">
+              <?php
+                $firstSlide = $publicMediaSlides[0];
+                $carouselInterval = ((int)($firstSlide['auto_slide'] ?? 1) === 1) ? (string)(int)($firstSlide['interval'] ?? 6500) : 'false';
+              ?>
+              <div id="publicMediaCarousel" class="carousel slide" data-bs-ride="carousel" data-bs-interval="<?= e($carouselInterval) ?>">
                 <?php if (count($publicMediaSlides) > 1): ?>
                   <div class="carousel-indicators">
                     <?php foreach ($publicMediaSlides as $idx => $_slide): ?>
@@ -1573,10 +1942,11 @@ if (login_table_exists($conn, 'public_social_links')) {
 
                 <div class="carousel-inner">
                   <?php foreach ($publicMediaSlides as $idx => $slide): ?>
-                    <div class="carousel-item <?= $idx === 0 ? 'active' : '' ?>" data-bs-interval="<?= $slide['type'] === 'video' ? 'false' : '6500' ?>">
+                    <?php $slideInterval = ((int)($slide['auto_slide'] ?? 1) === 1) ? (string)(int)($slide['interval'] ?? 6500) : 'false'; ?>
+                    <div class="carousel-item <?= $idx === 0 ? 'active' : '' ?>" data-bs-interval="<?= e($slideInterval) ?>">
                       <?php if ($slide['type'] === 'video'): ?>
                         <div class="media-frame media-video">
-                          <video controls preload="metadata">
+                          <video controls preload="metadata" <?= trim((string)($slide['thumbnail'] ?? '')) !== '' ? 'poster="' . e($slide['thumbnail']) . '"' : '' ?>>
                             <source src="<?= e($slide['src']) ?>">
                             Browser Anda tidak mendukung pemutaran video.
                           </video>
@@ -2323,6 +2693,59 @@ if (login_table_exists($conn, 'public_social_links')) {
         }
       });
 
+      var publicCarouselEl = document.getElementById('publicMediaCarousel');
+      if (publicCarouselEl && window.bootstrap) {
+        var publicCarousel = bootstrap.Carousel.getOrCreateInstance(publicCarouselEl);
+        var carouselVideos = publicCarouselEl.querySelectorAll('video');
+        var changingSlides = false;
+
+        function activeSlideAllowsAuto() {
+          var activeSlide = publicCarouselEl.querySelector('.carousel-item.active');
+          if (!activeSlide) return false;
+          return activeSlide.getAttribute('data-bs-interval') !== 'false';
+        }
+
+        function activeSlideHasPlayingVideo() {
+          var activeSlide = publicCarouselEl.querySelector('.carousel-item.active');
+          if (!activeSlide) return false;
+          return Array.prototype.some.call(activeSlide.querySelectorAll('video'), function (video) {
+            return !video.paused && !video.ended;
+          });
+        }
+
+        function resumeCarouselIfAllowed() {
+          if (activeSlideAllowsAuto() && !activeSlideHasPlayingVideo()) {
+            publicCarousel.cycle();
+          } else {
+            publicCarousel.pause();
+          }
+        }
+
+        carouselVideos.forEach(function (video) {
+          video.addEventListener('play', function () {
+            publicCarousel.pause();
+          });
+          video.addEventListener('pause', function () {
+            if (!changingSlides) resumeCarouselIfAllowed();
+          });
+          video.addEventListener('ended', function () {
+            if (!changingSlides) resumeCarouselIfAllowed();
+          });
+        });
+
+        publicCarouselEl.addEventListener('slide.bs.carousel', function () {
+          changingSlides = true;
+          carouselVideos.forEach(function (video) {
+            if (!video.paused && !video.ended) video.pause();
+          });
+        });
+        publicCarouselEl.addEventListener('slid.bs.carousel', function () {
+          changingSlides = false;
+          resumeCarouselIfAllowed();
+        });
+        resumeCarouselIfAllowed();
+      }
+
       var contactPanel = document.getElementById('kontak');
       var contactToggle = document.querySelector('.contact-toggle[data-target="kontak"]');
 
@@ -2669,6 +3092,504 @@ if (login_table_exists($conn, 'public_social_links')) {
 
   <?php if (isset($_GET['open']) && $_GET['open']==='login'){ echo "<script>document.addEventListener('DOMContentLoaded',function(){ new bootstrap.Modal(document.getElementById('loginModal')).show();});</script>"; } ?>
 
+<script>
+/* SIKAT_MANUAL_MEDIA_CENTER_DOTS_LIGHTBOX_JS */
+(function () {
+  function ready(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  function classifyRatio(w, h) {
+    var ratio = (w && h) ? (w / h) : 1.3;
+    if (ratio < 0.85) return 'is-portrait';
+    if (ratio > 1.2) return 'is-landscape';
+    return 'is-square';
+  }
+
+  ready(function () {
+    var carouselEl = document.getElementById('publicMediaCarousel');
+    if (!carouselEl) return;
+
+    var items = Array.prototype.slice.call(carouselEl.querySelectorAll('.carousel-item'));
+
+    items.forEach(function (item) {
+      var frame = item.querySelector('.media-frame');
+      var img = item.querySelector('.media-frame img');
+      var video = item.querySelector('.media-frame video');
+      var media = img || video;
+
+      if (!frame || !media) return;
+
+      frame.style.display = 'flex';
+      frame.style.alignItems = 'center';
+      frame.style.justifyContent = 'center';
+
+      if (!media.closest('.media-preview-trigger')) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'media-preview-trigger';
+        btn.setAttribute('aria-label', 'Buka media');
+
+        media.parentNode.insertBefore(btn, media);
+        btn.appendChild(media);
+
+        if (video) {
+          video.controls = false;
+          video.muted = true;
+          video.pause();
+
+          var play = document.createElement('div');
+          play.className = 'sikat-video-preview-play';
+          play.innerHTML = '<span>▶</span>';
+          btn.appendChild(play);
+        }
+      }
+
+      function applyMediaCenter() {
+        var w = img ? img.naturalWidth : video.videoWidth;
+        var h = img ? img.naturalHeight : video.videoHeight;
+        frame.classList.remove('media-portrait', 'media-landscape', 'media-square');
+
+        if (w && h && h > w) {
+          frame.classList.add('media-portrait');
+          media.style.width = 'auto';
+          media.style.height = '100%';
+        } else if (w && h && w > h) {
+          frame.classList.add('media-landscape');
+          media.style.width = '100%';
+          media.style.height = '100%';
+        } else {
+          frame.classList.add('media-square');
+          media.style.width = 'auto';
+          media.style.height = '100%';
+        }
+      }
+
+      if (img) {
+        if (img.complete) applyMediaCenter();
+        img.addEventListener('load', applyMediaCenter);
+      }
+
+      if (video) {
+        video.addEventListener('loadedmetadata', applyMediaCenter);
+      }
+    });
+
+    if (items.length > 1 && !document.querySelector('.sikat-media-dots')) {
+      var dots = document.createElement('div');
+      dots.className = 'sikat-media-dots';
+
+      items.forEach(function (item, idx) {
+        var dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'sikat-media-dot' + (item.classList.contains('active') ? ' active' : '');
+        dot.setAttribute('aria-label', 'Media ' + (idx + 1));
+        dot.addEventListener('click', function () {
+          if (typeof bootstrap !== 'undefined' && bootstrap.Carousel) {
+            bootstrap.Carousel.getOrCreateInstance(carouselEl).to(idx);
+          }
+        });
+        dots.appendChild(dot);
+      });
+
+      carouselEl.appendChild(dots);
+
+      carouselEl.addEventListener('slid.bs.carousel', function (ev) {
+        Array.prototype.slice.call(dots.children).forEach(function (dot, i) {
+          dot.classList.toggle('active', i === ev.to);
+        });
+      });
+    }
+
+    if (!document.getElementById('sikatMediaLightbox')) {
+      var lb = document.createElement('div');
+      lb.id = 'sikatMediaLightbox';
+      lb.className = 'sikat-media-lightbox';
+      lb.innerHTML =
+        '<div class="sikat-media-lightbox-dialog is-landscape" role="dialog" aria-modal="true">' +
+          '<div class="sikat-media-lightbox-header">' +
+            '<h3 class="sikat-media-lightbox-title"></h3>' +
+            '<button type="button" class="sikat-media-lightbox-close" aria-label="Tutup">×</button>' +
+          '</div>' +
+          '<div class="sikat-media-lightbox-body"></div>' +
+          '<div class="sikat-media-lightbox-caption"></div>' +
+        '</div>';
+      document.body.appendChild(lb);
+    }
+
+    var lightbox = document.getElementById('sikatMediaLightbox');
+    var dialog = lightbox.querySelector('.sikat-media-lightbox-dialog');
+    var titleEl = lightbox.querySelector('.sikat-media-lightbox-title');
+    var bodyEl = lightbox.querySelector('.sikat-media-lightbox-body');
+    var captionEl = lightbox.querySelector('.sikat-media-lightbox-caption');
+    var closeBtn = lightbox.querySelector('.sikat-media-lightbox-close');
+
+    function clearLightbox() {
+      var oldVideo = bodyEl.querySelector('video');
+      if (oldVideo) {
+        oldVideo.pause();
+        oldVideo.removeAttribute('src');
+        oldVideo.load();
+      }
+      bodyEl.innerHTML = '';
+      dialog.classList.remove('is-portrait', 'is-landscape', 'is-square');
+    }
+
+    function openLightboxFromMedia(media) {
+      clearLightbox();
+
+      var item = media.closest('.carousel-item');
+      var title = '';
+      var caption = '';
+
+      if (item) {
+        var titleNode = item.querySelector('.public-media-caption h2');
+        var captionNode = item.querySelector('.caption-full') || item.querySelector('.caption-short') || item.querySelector('.public-media-caption p');
+        title = titleNode ? titleNode.textContent.trim() : '';
+        caption = captionNode ? captionNode.textContent.trim() : '';
+      }
+
+      titleEl.textContent = title || 'Media Edukasi';
+      captionEl.textContent = caption || '';
+
+      if (media.tagName.toLowerCase() === 'video') {
+        var source = media.querySelector('source');
+        var src = source ? source.getAttribute('src') : media.getAttribute('src');
+        var poster = media.getAttribute('poster') || '';
+
+        var v = document.createElement('video');
+        v.controls = true;
+        v.preload = 'metadata';
+        if (poster) v.poster = poster;
+
+        var s = document.createElement('source');
+        s.src = src;
+        v.appendChild(s);
+
+        v.addEventListener('loadedmetadata', function () {
+          dialog.classList.add(classifyRatio(v.videoWidth, v.videoHeight));
+        });
+
+        bodyEl.appendChild(v);
+      } else {
+        var img = document.createElement('img');
+        img.src = media.currentSrc || media.src;
+        img.alt = media.alt || title || 'Media Edukasi';
+        img.addEventListener('load', function () {
+          dialog.classList.add(classifyRatio(img.naturalWidth, img.naturalHeight));
+        });
+        bodyEl.appendChild(img);
+      }
+
+      lightbox.classList.add('is-open');
+      document.body.classList.add('sikat-lightbox-open');
+    }
+
+    function closeLightbox() {
+      lightbox.classList.remove('is-open');
+      document.body.classList.remove('sikat-lightbox-open');
+      clearLightbox();
+    }
+
+    carouselEl.addEventListener('click', function (ev) {
+      var trigger = ev.target.closest('.media-preview-trigger');
+      if (!trigger) return;
+
+      ev.preventDefault();
+
+      var media = trigger.querySelector('img,video');
+      if (media) openLightboxFromMedia(media);
+    });
+
+    closeBtn.addEventListener('click', closeLightbox);
+
+    lightbox.addEventListener('click', function (ev) {
+      if (ev.target === lightbox) closeLightbox();
+    });
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && lightbox.classList.contains('is-open')) {
+        closeLightbox();
+      }
+    });
+  });
+})();
+</script>
+<style>
+/* SIKAT_FINAL_FIX_CAROUSEL_SYNC_DOTS_20260625 */
+.public-media {
+  display: block !important;
+  position: relative !important;
+}
+
+.public-media .carousel {
+  width: 100% !important;
+  position: relative !important;
+}
+
+.public-media .carousel-inner {
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+.public-media .carousel-item {
+  width: 100% !important;
+  display: none !important;
+}
+
+.public-media .carousel-item.active,
+.public-media .carousel-item-next,
+.public-media .carousel-item-prev {
+  display: block !important;
+}
+
+.public-media .media-frame {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+.public-media .media-preview-trigger {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  cursor: zoom-in !important;
+}
+
+.public-media .media-frame img,
+.public-media .media-frame video,
+.public-media .media-preview-trigger img,
+.public-media .media-preview-trigger video {
+  display: block !important;
+  object-fit: contain !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.public-media .media-frame.media-portrait img,
+.public-media .media-frame.media-portrait video,
+.public-media .media-frame.media-portrait .media-preview-trigger img,
+.public-media .media-frame.media-portrait .media-preview-trigger video {
+  width: auto !important;
+  height: 100% !important;
+  max-width: 100% !important;
+}
+
+.public-media .media-frame.media-landscape img,
+.public-media .media-frame.media-landscape video,
+.public-media .media-frame.media-landscape .media-preview-trigger img,
+.public-media .media-frame.media-landscape .media-preview-trigger video {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Matikan indikator custom lama agar tidak mengganggu carousel */
+.public-media .sikat-media-dots {
+  display: none !important;
+}
+
+/* Gunakan indikator Bootstrap bawaan, tetapi dibuat modern */
+.public-media .carousel-indicators {
+  position: absolute !important;
+  top: 12px !important;
+  bottom: auto !important;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 30 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 9px !important;
+  margin: 0 !important;
+  padding: 7px 10px !important;
+  width: auto !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, .78) !important;
+  backdrop-filter: blur(7px);
+  box-shadow: 0 8px 24px rgba(0, 60, 34, .16);
+}
+
+.public-media .carousel-indicators [data-bs-target] {
+  box-sizing: border-box !important;
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  border-radius: 999px !important;
+  border: 2px solid rgba(0, 105, 63, .55) !important;
+  background: rgba(230, 247, 238, .95) !important;
+  opacity: 1 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  text-indent: -999px !important;
+  overflow: hidden !important;
+  transition: all .25s ease !important;
+}
+
+.public-media .carousel-indicators .active {
+  width: 32px !important;
+  min-width: 32px !important;
+  background: linear-gradient(135deg, #006b3f, #0da85d) !important;
+  border-color: #d8a31a !important;
+  box-shadow: 0 0 0 3px rgba(216,163,26,.24), 0 8px 18px rgba(0,90,50,.24) !important;
+}
+
+.public-media-caption {
+  width: 100% !important;
+}
+</style>
+
+<script>
+/* SIKAT_FINAL_FIX_CAROUSEL_SYNC_DOTS_JS_20260625 */
+(function () {
+  function ready(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  ready(function () {
+    var carouselEl = document.getElementById('publicMediaCarousel');
+    if (!carouselEl) return;
+
+    /* Hapus indikator custom lama supaya tidak mengacaukan sync slide */
+    carouselEl.querySelectorAll('.sikat-media-dots').forEach(function (el) {
+      el.remove();
+    });
+
+    var items = Array.prototype.slice.call(carouselEl.querySelectorAll('.carousel-inner .carousel-item'));
+    if (!items.length) return;
+
+    /* Pastikan indikator Bootstrap bawaan ada dan jumlahnya sama dengan jumlah media */
+    var indicators = carouselEl.querySelector('.carousel-indicators');
+    if (items.length > 1) {
+      if (!indicators) {
+        indicators = document.createElement('div');
+        indicators.className = 'carousel-indicators';
+        carouselEl.insertBefore(indicators, carouselEl.firstChild);
+      }
+
+      indicators.innerHTML = '';
+
+      items.forEach(function (item, idx) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.setAttribute('data-bs-target', '#publicMediaCarousel');
+        btn.setAttribute('data-bs-slide-to', String(idx));
+        btn.setAttribute('aria-label', 'Slide ' + (idx + 1));
+
+        if (idx === 0 || item.classList.contains('active')) {
+          btn.className = 'active';
+          btn.setAttribute('aria-current', 'true');
+        }
+
+        indicators.appendChild(btn);
+      });
+    } else if (indicators) {
+      indicators.remove();
+    }
+
+    /* Paksa hanya satu slide aktif */
+    var activeItems = items.filter(function (item) {
+      return item.classList.contains('active');
+    });
+
+    if (activeItems.length === 0) {
+      items[0].classList.add('active');
+    } else if (activeItems.length > 1) {
+      activeItems.slice(1).forEach(function (item) {
+        item.classList.remove('active');
+      });
+    }
+
+    /* Sync indikator setelah slide berubah */
+    carouselEl.addEventListener('slide.bs.carousel', function (ev) {
+      if (!indicators) return;
+
+      Array.prototype.slice.call(indicators.children).forEach(function (dot, i) {
+        var active = i === ev.to;
+        dot.classList.toggle('active', active);
+        if (active) {
+          dot.setAttribute('aria-current', 'true');
+        } else {
+          dot.removeAttribute('aria-current');
+        }
+      });
+    });
+
+    /* Center ulang media portrait/landscape */
+    function centerMedia(frame, media) {
+      if (!frame || !media) return;
+
+      var w = media.tagName.toLowerCase() === 'img' ? media.naturalWidth : media.videoWidth;
+      var h = media.tagName.toLowerCase() === 'img' ? media.naturalHeight : media.videoHeight;
+
+      frame.classList.remove('media-portrait', 'media-landscape', 'media-square');
+
+      if (w && h && h > w) {
+        frame.classList.add('media-portrait');
+        media.style.width = 'auto';
+        media.style.height = '100%';
+      } else if (w && h && w > h) {
+        frame.classList.add('media-landscape');
+        media.style.width = '100%';
+        media.style.height = '100%';
+      } else {
+        frame.classList.add('media-square');
+        media.style.width = 'auto';
+        media.style.height = '100%';
+      }
+    }
+
+    items.forEach(function (item) {
+      var frame = item.querySelector('.media-frame');
+      var media = item.querySelector('.media-frame img, .media-frame video');
+
+      if (!frame || !media) return;
+
+      if (media.tagName.toLowerCase() === 'img') {
+        if (media.complete) centerMedia(frame, media);
+        media.addEventListener('load', function () {
+          centerMedia(frame, media);
+        });
+      } else {
+        media.addEventListener('loadedmetadata', function () {
+          centerMedia(frame, media);
+        });
+      }
+    });
+
+    /* Re-init Bootstrap Carousel secara ringan agar indikator bawaan sinkron */
+    if (typeof bootstrap !== 'undefined' && bootstrap.Carousel) {
+      var instance = bootstrap.Carousel.getInstance(carouselEl);
+      if (instance) {
+        instance.dispose();
+      }
+
+      bootstrap.Carousel.getOrCreateInstance(carouselEl, {
+        ride: 'carousel',
+        wrap: true,
+        touch: true
+      });
+    }
+  });
+})();
+</script>
 </body>
 
 </html>

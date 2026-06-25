@@ -49,6 +49,16 @@ function media_table_exists(mysqli $conn): bool {
     return false;
 }
 
+function media_column_exists(mysqli $conn, string $column): bool {
+    $columnEsc = $conn->real_escape_string($column);
+    if ($rs = $conn->query("SHOW COLUMNS FROM public_media LIKE '{$columnEsc}'")) {
+        $ok = $rs->num_rows > 0;
+        $rs->free();
+        return $ok;
+    }
+    return false;
+}
+
 function media_flash(string $type, string $message): void {
     $_SESSION['public_media_flash'] = ['type' => $type, 'message' => $message];
 }
@@ -68,7 +78,21 @@ function media_type_from_extension(string $ext): string {
     return '';
 }
 
+function media_slide_interval_from_post(string $field): int {
+    $raw = trim((string)($_POST[$field] ?? ''));
+    $seconds = $raw === '' ? 6.5 : (float)str_replace(',', '.', $raw);
+    if ($seconds < 3) $seconds = 3;
+    if ($seconds > 30) $seconds = 30;
+    return (int)round($seconds * 1000);
+}
+
+function media_interval_seconds_label($intervalMs): string {
+    $seconds = max(3, min(30, ((int)$intervalMs > 0 ? (int)$intervalMs : 6500) / 1000));
+    return rtrim(rtrim(number_format($seconds, 1, '.', ''), '0'), '.');
+}
+
 $tableReady = media_table_exists($conn);
+$swiftReady = $tableReady && media_column_exists($conn, 'auto_slide') && media_column_exists($conn, 'slide_interval');
 $mediaDir = __DIR__ . '/assets/public/media';
 if (!is_dir($mediaDir)) { @mkdir($mediaDir, 0755, true); }
 
@@ -81,15 +105,112 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $action = (string)($_POST['action'] ?? '');
 
+    if ($action === 'capture_thumbnail') {
+        $id = (int)($_POST['id'] ?? 0);
+        $thumbnailData = (string)($_POST['thumbnail_data'] ?? '');
+
+        if ($id <= 0 || $thumbnailData === '') {
+            media_flash('danger', 'Data thumbnail tidak lengkap.');
+            header('Location: public_media.php'); exit;
+        }
+
+        if (!preg_match('/^data:image\/(png|jpeg|jpg|webp);base64,/', $thumbnailData, $matches)) {
+            media_flash('danger', 'Format thumbnail tidak valid.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $ext = strtolower($matches[1]);
+        if ($ext === 'jpeg') {
+            $ext = 'jpg';
+        }
+
+        $base64 = preg_replace('/^data:image\/(png|jpeg|jpg|webp);base64,/', '', $thumbnailData);
+        $binary = base64_decode($base64, true);
+
+        if ($binary === false || strlen($binary) < 100) {
+            media_flash('danger', 'Gagal membaca data thumbnail.');
+            header('Location: public_media.php'); exit;
+        }
+
+        if (strlen($binary) > 3 * 1024 * 1024) {
+            media_flash('danger', 'Ukuran thumbnail maksimal 3 MB.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $imgInfo = @getimagesizefromstring($binary);
+        if ($imgInfo === false) {
+            media_flash('danger', 'Thumbnail bukan gambar yang valid.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $stmt = $conn->prepare("SELECT id, media_type, thumbnail_path FROM public_media WHERE id=? LIMIT 1");
+        if (!$stmt) {
+            media_flash('danger', 'Gagal menyiapkan validasi media.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $mediaRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$mediaRow || ($mediaRow['media_type'] ?? '') !== 'video') {
+            media_flash('danger', 'Media video tidak ditemukan.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $dir = __DIR__ . '/assets/public/media';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $storedName = 'public_thumb_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $dest = $dir . '/' . $storedName;
+        $relativePath = 'assets/public/media/' . $storedName;
+
+        if (file_put_contents($dest, $binary) === false) {
+            media_flash('danger', 'Gagal menyimpan thumbnail.');
+            header('Location: public_media.php'); exit;
+        }
+
+        @chmod($dest, 0644);
+
+        $oldThumb = trim((string)($mediaRow['thumbnail_path'] ?? ''));
+        if ($oldThumb !== '' && str_starts_with($oldThumb, 'assets/public/media/public_thumb_')) {
+            $oldFull = __DIR__ . '/' . $oldThumb;
+            if (is_file($oldFull)) {
+                @unlink($oldFull);
+            }
+        }
+
+        $stmt = $conn->prepare("UPDATE public_media SET thumbnail_path=?, updated_at=NOW() WHERE id=?");
+        if (!$stmt) {
+            media_flash('danger', 'Gagal menyiapkan update thumbnail.');
+            header('Location: public_media.php'); exit;
+        }
+
+        $stmt->bind_param('si', $relativePath, $id);
+        $stmt->execute();
+        $stmt->close();
+
+        media_flash('success', 'Thumbnail video berhasil diperbarui dari frame yang dipilih.');
+        header('Location: public_media.php'); exit;
+    }
     if ($action === 'upload') {
         $title = trim((string)($_POST['title'] ?? ''));
         $caption = trim((string)($_POST['caption'] ?? ''));
         $requestedType = strtolower(trim((string)($_POST['media_type'] ?? '')));
         $sortOrder = (int)($_POST['sort_order'] ?? 0);
         $isActive = isset($_POST['is_active']) ? 1 : 0;
+        $autoSlide = isset($_POST['auto_slide']) ? 1 : 0;
+        $slideInterval = media_slide_interval_from_post('slide_interval_seconds');
 
         if ($title === '') {
             media_flash('danger', 'Judul media wajib diisi.');
+            header('Location: public_media.php'); exit;
+        }
+        if (!$swiftReady) {
+            media_flash('danger', 'Kolom Swift Otomatis belum tersedia. Jalankan migration terlebih dahulu.');
             header('Location: public_media.php'); exit;
         }
         if (empty($_FILES['media_file']) || (int)($_FILES['media_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -149,8 +270,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $relPath = 'assets/public/media/' . $storedName;
-        if ($stmt = $conn->prepare("INSERT INTO public_media (title, caption, file_path, media_type, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?)")) {
-            $stmt->bind_param('ssssii', $title, $caption, $relPath, $mediaType, $sortOrder, $isActive);
+        if ($stmt = $conn->prepare("INSERT INTO public_media (title, caption, file_path, media_type, sort_order, is_active, auto_slide, slide_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            $stmt->bind_param('ssssiiii', $title, $caption, $relPath, $mediaType, $sortOrder, $isActive, $autoSlide, $slideInterval);
             $ok = $stmt->execute();
             $stmt->close();
             if ($ok) {
@@ -169,8 +290,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $caption = trim((string)($_POST['caption'] ?? ''));
         $sortOrder = (int)($_POST['sort_order'] ?? 0);
         $isActive = isset($_POST['is_active']) ? 1 : 0;
-        if ($id > 0 && $title !== '' && ($stmt = $conn->prepare("UPDATE public_media SET title=?, caption=?, sort_order=?, is_active=?, updated_at=NOW() WHERE id=?"))) {
-            $stmt->bind_param('ssiii', $title, $caption, $sortOrder, $isActive, $id);
+        $autoSlide = isset($_POST['auto_slide']) ? 1 : 0;
+        $slideInterval = media_slide_interval_from_post('slide_interval_seconds');
+        if (!$swiftReady) {
+            media_flash('danger', 'Kolom Swift Otomatis belum tersedia. Jalankan migration terlebih dahulu.');
+            header('Location: public_media.php'); exit;
+        }
+        if ($id > 0 && $title !== '' && ($stmt = $conn->prepare("UPDATE public_media SET title=?, caption=?, sort_order=?, is_active=?, auto_slide=?, slide_interval=?, updated_at=NOW() WHERE id=?"))) {
+            $stmt->bind_param('ssiiiii', $title, $caption, $sortOrder, $isActive, $autoSlide, $slideInterval, $id);
             $stmt->execute();
             $stmt->close();
             media_flash('success', 'Media publik diperbarui.');
@@ -250,6 +377,11 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
       <code>deploy/migrations/20260624_101500_create_public_media.sql</code>
     </div>
   <?php endif; ?>
+  <?php if ($tableReady && !$swiftReady): ?>
+    <div class="alert alert-warning">
+      Kolom <b>Swift Otomatis</b> belum tersedia. Jalankan migration baru untuk menambah <code>auto_slide</code> dan <code>slide_interval</code>.
+    </div>
+  <?php endif; ?>
 
   <section class="panel p-4 mb-4">
     <h2 class="h6 text-success mb-3"><i class="bi bi-upload me-1"></i>Upload Media</h2>
@@ -285,8 +417,21 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
           <label class="form-check-label" for="is_active_upload">Aktif</label>
         </div>
       </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="auto_slide" id="auto_slide_upload" checked>
+          <label class="form-check-label" for="auto_slide_upload">Aktifkan swift otomatis</label>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="slide_interval_upload">Durasi swift otomatis</label>
+        <div class="input-group">
+          <input name="slide_interval_seconds" id="slide_interval_upload" type="number" class="form-control" min="3" max="30" step="0.1" value="6.5">
+          <span class="input-group-text">Detik</span>
+        </div>
+      </div>
       <div class="col-12">
-        <button class="btn btn-primary" <?= !$tableReady ? 'disabled' : '' ?>><i class="bi bi-cloud-arrow-up me-1"></i>Upload Media</button>
+        <button class="btn btn-primary" <?= (!$tableReady || !$swiftReady) ? 'disabled' : '' ?>><i class="bi bi-cloud-arrow-up me-1"></i>Upload Media</button>
       </div>
     </form>
   </section>
@@ -298,10 +443,14 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
     <?php else: ?>
       <div class="table-responsive">
         <table class="table align-middle">
-          <thead><tr><th>Preview</th><th>Metadata</th><th style="width:120px">Urutan</th><th style="width:100px">Aktif</th><th>Aksi</th></tr></thead>
+          <thead><tr><th>Preview</th><th>Metadata</th><th style="width:230px">Swift Otomatis</th><th style="width:120px">Urutan</th><th style="width:100px">Aktif</th><th>Aksi</th></tr></thead>
           <tbody>
             <?php foreach ($items as $item): ?>
-              <?php $src = '/ski_new/' . ltrim(str_replace('\\', '/', (string)$item['file_path']), '/'); ?>
+              <?php
+                $src = '/ski_new/' . ltrim(str_replace('\\', '/', (string)$item['file_path']), '/');
+                $itemAutoSlide = (int)($item['auto_slide'] ?? 1);
+                $itemSlideSeconds = media_interval_seconds_label($item['slide_interval'] ?? 6500);
+              ?>
               <tr>
                 <td>
                   <?php if (($item['media_type'] ?? '') === 'video'): ?>
@@ -316,7 +465,21 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
                     <div class="col-md-6"><input name="title" class="form-control" value="<?= e($item['title']) ?>" maxlength="150" required></div>
                     <div class="col-md-6"><input name="caption" class="form-control" value="<?= e($item['caption']) ?>" maxlength="255" placeholder="Caption"></div>
                     <div class="col-12 hint"><?= e($item['media_type']) ?> - <?= e($item['file_path']) ?></div>
+                    <div class="col-12 hint">
+                      <?= $itemAutoSlide === 1 ? 'Swift otomatis aktif: ' . e($itemSlideSeconds) . ' detik' : 'Swift otomatis nonaktif' ?>
+                    </div>
                   </form>
+                </td>
+                <td>
+                  <div class="form-check mb-2">
+                    <input form="media-form-<?= (int)$item['id'] ?>" class="form-check-input" type="checkbox" name="auto_slide" id="auto_slide_<?= (int)$item['id'] ?>" <?= $itemAutoSlide === 1 ? 'checked' : '' ?>>
+                    <label class="form-check-label" for="auto_slide_<?= (int)$item['id'] ?>">Aktifkan swift otomatis</label>
+                  </div>
+                  <label class="form-label small mb-1" for="slide_interval_<?= (int)$item['id'] ?>">Durasi swift otomatis</label>
+                  <div class="input-group input-group-sm">
+                    <input form="media-form-<?= (int)$item['id'] ?>" name="slide_interval_seconds" id="slide_interval_<?= (int)$item['id'] ?>" type="number" class="form-control" min="3" max="30" step="0.1" value="<?= e($itemSlideSeconds) ?>">
+                    <span class="input-group-text">Detik</span>
+                  </div>
                 </td>
                 <td><input form="media-form-<?= (int)$item['id'] ?>" name="sort_order" type="number" class="form-control" value="<?= (int)$item['sort_order'] ?>"></td>
                 <td class="text-center"><input form="media-form-<?= (int)$item['id'] ?>" class="form-check-input" type="checkbox" name="is_active" <?= ((int)$item['is_active'] === 1) ? 'checked' : '' ?>></td>
@@ -338,5 +501,204 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
   </section>
 </main>
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
+<script>
+/* SIKAT_CAPTURE_VIDEO_FRAME_THUMBNAIL_20260625 */
+(function () {
+  function ready(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  ready(function () {
+    var csrfInput = document.querySelector('input[name="csrf"]');
+    var csrfValue = csrfInput ? csrfInput.value : '';
+
+    document.querySelectorAll('video.media-thumb').forEach(function (video) {
+      var container = video.closest('tr, .card, .media-item, .row, .border, .p-3') || video.parentElement;
+      if (!container) return;
+
+      var idInput = container.querySelector('input[name="id"]');
+      if (!idInput) {
+        idInput = document.querySelector('input[name="id"]');
+      }
+      if (!idInput || !idInput.value) return;
+
+      if (container.querySelector('.capture-video-frame-btn')) return;
+
+      var help = document.createElement('div');
+      help.className = 'small text-muted mt-2';
+      help.textContent = 'Putar atau geser video ke frame yang diinginkan, lalu klik tombol di bawah.';
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-outline-success mt-2 capture-video-frame-btn';
+      btn.innerHTML = '<i class="bi bi-camera"></i> Gunakan frame ini sebagai thumbnail';
+
+      video.insertAdjacentElement('afterend', help);
+      help.insertAdjacentElement('afterend', btn);
+
+      btn.addEventListener('click', function () {
+        try {
+          if (!video.videoWidth || !video.videoHeight) {
+            alert('Video belum siap. Putar atau geser video sebentar, lalu coba lagi.');
+            return;
+          }
+
+          var canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          var dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+
+          var form = document.createElement('form');
+          form.method = 'POST';
+          form.action = 'public_media.php';
+
+          var fields = {
+            action: 'capture_thumbnail',
+            id: idInput.value,
+            thumbnail_data: dataUrl
+          };
+
+          if (csrfValue) {
+            fields.csrf = csrfValue;
+          }
+
+          Object.keys(fields).forEach(function (name) {
+            var input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = fields[name];
+            form.appendChild(input);
+          });
+
+          document.body.appendChild(form);
+          form.submit();
+        } catch (err) {
+          console.error(err);
+          alert('Gagal mengambil frame video. Pastikan video sudah bisa diputar.');
+        }
+      });
+    });
+  });
+})();
+</script>
+<style>
+/* SIKAT_FIX_ADMIN_VIDEO_PREVIEW_CONTROLS_20260625 */
+video.media-thumb,
+.public-media-admin video,
+table video,
+.card video {
+  display: block !important;
+  width: 260px !important;
+  max-width: 100% !important;
+  height: 150px !important;
+  object-fit: contain !important;
+  background: #061f17 !important;
+  border-radius: 10px !important;
+  position: relative !important;
+  z-index: 5 !important;
+}
+
+.capture-video-frame-btn {
+  position: relative !important;
+  z-index: 6 !important;
+}
+</style>
+
+<script>
+/* SIKAT_FIX_ADMIN_VIDEO_PREVIEW_CONTROLS_JS_20260625 */
+(function () {
+  function ready(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  ready(function () {
+    document.querySelectorAll('video').forEach(function (video) {
+      var src = video.getAttribute('src') || '';
+      var hasSource = video.querySelector('source');
+
+      if (!src && !hasSource) return;
+
+      video.classList.add('media-thumb');
+      video.setAttribute('controls', 'controls');
+      video.setAttribute('preload', 'metadata');
+      video.removeAttribute('autoplay');
+      video.muted = false;
+      video.style.pointerEvents = 'auto';
+
+      if (!video.closest('form')) return;
+
+      var form = video.closest('form');
+      var idInput = form.querySelector('input[name="id"]');
+      if (!idInput || !idInput.value) return;
+
+      var existingBtn = form.querySelector('.capture-video-frame-btn');
+      if (existingBtn) {
+        existingBtn.onclick = function (ev) {
+          ev.preventDefault();
+
+          try {
+            if (!video.videoWidth || !video.videoHeight) {
+              alert('Video belum siap. Klik play atau geser timeline video dulu, lalu pause pada frame yang dipilih.');
+              return false;
+            }
+
+            var canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            var dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+
+            var submitForm = document.createElement('form');
+            submitForm.method = 'POST';
+            submitForm.action = 'public_media.php';
+
+            var csrfInput = document.querySelector('input[name="csrf"]');
+            var fields = {
+              action: 'capture_thumbnail',
+              id: idInput.value,
+              thumbnail_data: dataUrl
+            };
+
+            if (csrfInput && csrfInput.value) {
+              fields.csrf = csrfInput.value;
+            }
+
+            Object.keys(fields).forEach(function (name) {
+              var input = document.createElement('input');
+              input.type = 'hidden';
+              input.name = name;
+              input.value = fields[name];
+              submitForm.appendChild(input);
+            });
+
+            document.body.appendChild(submitForm);
+            submitForm.submit();
+          } catch (err) {
+            console.error(err);
+            alert('Gagal mengambil frame video. Pastikan video sudah bisa diputar dan tidak rusak.');
+          }
+
+          return false;
+        };
+      }
+    });
+  });
+})();
+</script>
 </body>
 </html>

@@ -122,7 +122,7 @@ $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_
 <header class="topbar">
   <div class="topbar-brand">
     <img class="topbar-logo" src="/ski_new/asset/logo_poltekkes_baru-60h.png" alt="Poltekkes Ternate">
-    <span class="sikat-version-badge">SIKAT v2.0</span>
+    <span class="sikat-version-badge">SIKAT v3.0</span>
     <span class="sr-only">Poltekkes Ternate</span>
   </div>
   <div class="topbar-actions">

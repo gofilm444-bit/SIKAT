@@ -1,5 +1,168 @@
 # CHANGELOG_PATCH
 
+## 2026-06-25 13:05:00 - Rapikan posisi media carousel dan indikator slide
+
+### File Diubah
+
+* login.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Membuat media portrait/9:16 tetap berada di tengah frame carousel
+* Merapikan wrapper media clickable/lightbox
+* Menambahkan indikator slide modern berbentuk bulatan unik
+* Menyinkronkan jumlah indikator dengan jumlah media publik
+* Mempertahankan swift otomatis dan lightbox media
+
+### Dampak
+
+* Tampilan carousel media publik lebih rapi
+* Media portrait tidak lagi menempel ke kiri
+* Pengguna dapat melihat jumlah media melalui indikator slide
+* Navigasi media lebih modern
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Gambar portrait 9:16 tampil center di frame
+* [ ] Gambar landscape tampil rapi
+* [ ] Video portrait tampil center
+* [ ] Video landscape tampil rapi
+* [ ] Klik gambar membuka popup
+* [ ] Klik video membuka popup
+* [ ] Indikator bulatan muncul sesuai jumlah media
+* [ ] Indikator aktif berubah sesuai slide
+* [ ] Klik indikator berpindah ke slide yang benar
+* [ ] Jika hanya 1 media, indikator tidak mengganggu
+* [ ] Swift otomatis tetap berjalan sesuai pengaturan
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile rapi
+
+## 2026-06-25 12:55:00 - Rapikan rasio popup media publik
+
+### File Diubah
+
+* login.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Membuat popup media mengikuti rasio gambar/video
+* Menambahkan class portrait, landscape, dan square pada lightbox
+* Mengurangi area kosong hitam pada video portrait
+* Mempertahankan object-fit contain agar media tidak terpotong
+
+### Dampak
+
+* Tampilan popup gambar/video lebih rapi
+* Video portrait tampil lebih proporsional
+* Media tetap responsif di desktop dan mobile
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Popup gambar landscape tampil lebar proporsional
+* [ ] Popup gambar portrait tampil ramping proporsional
+* [ ] Popup video landscape tampil lebar proporsional
+* [ ] Popup video portrait tampil ramping dan tidak terlalu banyak area hitam
+* [ ] Popup mobile tetap rapi
+* [ ] Tombol close tetap berfungsi
+* [ ] Escape tetap menutup popup
+* [ ] Video berhenti saat popup ditutup
+* [ ] Carousel tetap berjalan sesuai pengaturan swift otomatis
+
+## 2026-06-25 12:45:00 - Tambah popup media edukasi publik
+
+### File Diubah
+
+* login.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan lightbox/popup untuk gambar dan video media publik
+* Membuat media carousel hanya sebagai preview
+* Menambahkan ikon play pada preview video
+* Menjaga carousel tetap mengikuti pengaturan swift otomatis
+* Menghentikan video saat popup ditutup
+
+### Dampak
+
+* Media publik lebih modern dan nyaman dilihat
+* Video tidak lagi mengganggu swift otomatis carousel
+* Pengguna dapat melihat gambar/video dalam ukuran besar
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Klik gambar membuka popup gambar
+* [ ] Klik video membuka popup video
+* [ ] Video di popup bisa diputar
+* [ ] Video berhenti saat popup ditutup
+* [ ] Escape menutup popup
+* [ ] Klik backdrop menutup popup
+* [ ] Carousel tetap swift otomatis jika auto_slide aktif
+* [ ] Carousel tidak swift otomatis jika auto_slide nonaktif
+* [ ] Durasi swift mengikuti pengaturan admin
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile rapi
+* [ ] Tidak ada error JavaScript
+* [ ] Tidak ada error PHP
+
+## 2026-06-25 11:34:46 - Tambah pengaturan swift otomatis media publik
+
+### File Diubah
+
+* public_media.php
+* login.php
+* deploy/migrations/20260625_113433_add_public_media_auto_slide.sql
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan kolom auto_slide dan slide_interval pada public_media
+* Menambahkan pengaturan Swift Otomatis di Kelola Media Publik
+* Menambahkan pengaturan durasi swift per media
+* Menyesuaikan carousel publik agar mengikuti pengaturan per media
+* Mempertahankan pause carousel saat video sedang diputar
+
+### Dampak
+
+* Admin dapat mengatur media mana yang berpindah otomatis
+* Video tidak lagi membuat carousel berhenti permanen
+* Halaman publik lebih fleksibel dan mudah dikendalikan
+
+### Kebutuhan Database
+
+* Jalankan migration baru untuk menambah kolom auto_slide dan slide_interval
+
+### Checklist Pengujian
+
+* [ ] Upload gambar dengan swift otomatis aktif
+* [ ] Upload video dengan swift otomatis aktif
+* [ ] Upload video dengan thumbnail
+* [ ] Set durasi swift 5 detik
+* [ ] Set durasi swift 10 detik
+* [ ] Nonaktifkan swift otomatis pada salah satu media
+* [ ] Media dengan swift nonaktif tidak berpindah otomatis
+* [ ] Media dengan swift aktif berpindah otomatis sesuai durasi
+* [ ] Video yang sedang play tidak berpindah
+* [ ] Video pause/ended membuat carousel bisa lanjut
+* [ ] Edit media tetap berhasil
+* [ ] Hapus media tetap berhasil
+* [ ] Halaman publik tidak error
+* [ ] Kelola Media Publik tidak error
+
 ## 2026-01-26 — CRUD Prepared Statements Refactor
 
 ### Ringkas
