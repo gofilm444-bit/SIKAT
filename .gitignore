@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+LOCAL_ADMIN_CREDENTIALS.md
 db.php
 config_mail.php
 db/koneksi.php
@@ -13,8 +14,12 @@ cache/
 logs/
 vendor/
 *.sql
+!deploy/
+!deploy/migrations/
+!deploy/migrations/*.sql
 *.sql.gz
 *.tar
 *.tar.gz
 *.zip
 *.bak
+*.bak*

@@ -1694,3 +1694,97 @@ Tidak ada perubahan database
 * [ ] Tidak ada fatal error
 * [ ] Tidak ada file sensitif ikut berubah
 * [ ] PHP syntax check sukses
+
+## 2026-07-10 11:13:51 - Pondasi mesin template CHR dinamis
+
+### File Baru
+
+* chr_templates.php
+* deploy/migrations/20260710_add_chr_template_metadata.sql
+
+### File Diubah
+
+* chr_helpers.php
+* .gitignore
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan registry template CHR.
+* Menambahkan mapping jenis reviu ke template.
+* Menambahkan metadata template_code dan template_version.
+* Menjaga kompatibilitas CHR lama.
+* Menambahkan fallback template legacy.
+* Belum mengubah tampilan form CHR.
+* Belum mengubah ekspor Word/PDF.
+* Menyesuaikan .gitignore agar migration deploy/migrations dapat dicommit tanpa menyertakan credential lokal atau file backup.
+
+### Dampak
+
+* Sistem mulai dapat mengenali jenis template CHR.
+* CHR lama tetap menggunakan form legacy.
+* Template baru dapat ditambahkan bertahap.
+* Tidak ada perubahan visual pada tahap ini.
+
+### Kebutuhan Database
+
+Jalankan:
+`deploy/migrations/20260710_add_chr_template_metadata.sql`
+
+### Checklist Pengujian
+
+* [x] php -l chr_helpers.php sukses
+* [x] php -l chr_templates.php sukses
+* [ ] migration dapat dijalankan
+* [ ] CHR lama tetap terbuka
+* [ ] CHR lama tetap dapat disimpan
+* [ ] data_json lama tetap kompatibel
+* [x] resolver reviu anggaran = chr_rkakl
+* [x] resolver LHKPN/LHKASN = chr_lhkpn_lhkasn
+* [x] resolver Manajemen Resiko = chr_manajemen_risiko
+* [x] SPIPT fallback legacy
+* [x] Kehadiran Pegawai fallback legacy
+* [x] tidak ada perubahan visual
+* [x] tidak ada perubahan ekspor
+* [x] tidak ada parse error
+
+## 2026-07-10 11:36:23 - Perbaikan penyimpanan CHR legacy
+
+### File Diubah
+
+* chr_helpers.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Memperbaiki penyimpanan CHR lama agar tidak menimpa seluruh data_json.
+* Menambahkan merge data lama dan input baru.
+* Mempertahankan field yang tidak dikirim form.
+* Menjaga repeater dan struktur nested legacy.
+* Menjaga metadata template.
+
+### Dampak
+
+* CHR lama aman disimpan ulang.
+* Data lama tidak hilang.
+* Template legacy tetap kompatibel.
+* Tidak ada perubahan visual.
+* Tidak ada perubahan ekspor.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database tambahan.
+
+### Checklist Pengujian
+
+* [x] php -l chr_helpers.php sukses
+* [ ] CHR lama dapat dibuka
+* [ ] CHR lama dapat disimpan
+* [ ] panjang data_json tidak turun drastis
+* [x] field lama tetap ada pada simulasi merge
+* [x] perubahan satu field tersimpan pada simulasi merge
+* [ ] repeater tetap utuh
+* [ ] tanda tangan tetap utuh
+* [ ] template_code legacy tersimpan
+* [ ] ekspor tidak berubah
+* [x] tidak ada parse error

@@ -71,8 +71,124 @@ if (!function_exists('chr_sanitize_signature')) {
   }
 }
 
+if (!function_exists('chr_template_registry')) {
+  function chr_template_registry(): array {
+    static $registry = null;
+    if ($registry !== null) { return $registry; }
+
+    $fallback = [
+      'chr_legacy_laporan_keuangan' => [
+        'code' => 'chr_legacy_laporan_keuangan',
+        'name' => 'CHR Laporan Keuangan Legacy',
+        'version' => 1,
+        'aliases' => ['Reviu Laporan Keuangan', 'Laporan Keuangan'],
+        'status' => 'active',
+        'renderer' => 'legacy',
+      ],
+    ];
+
+    $path = __DIR__ . '/chr_templates.php';
+    if (!is_file($path)) {
+      $registry = $fallback;
+      return $registry;
+    }
+
+    $loaded = require $path;
+    if (!is_array($loaded)) {
+      $registry = $fallback;
+      return $registry;
+    }
+
+    $registry = [];
+    foreach ($loaded as $code => $template) {
+      if (!is_array($template)) { continue; }
+      $templateCode = trim((string)($template['code'] ?? $code));
+      if ($templateCode === '') { continue; }
+      $template['code'] = $templateCode;
+      $template['version'] = max(1, (int)($template['version'] ?? 1));
+      $template['aliases'] = isset($template['aliases']) && is_array($template['aliases']) ? $template['aliases'] : [];
+      $template['renderer'] = trim((string)($template['renderer'] ?? 'legacy')) ?: 'legacy';
+      $registry[$templateCode] = $template;
+    }
+
+    if (!isset($registry['chr_legacy_laporan_keuangan'])) {
+      $registry['chr_legacy_laporan_keuangan'] = $fallback['chr_legacy_laporan_keuangan'];
+    }
+
+    return $registry;
+  }
+}
+
+if (!function_exists('chr_template_get')) {
+  function chr_template_get(string $code): ?array {
+    $code = trim($code);
+    if ($code === '') { return null; }
+    $registry = chr_template_registry();
+    return $registry[$code] ?? null;
+  }
+}
+
+if (!function_exists('chr_template_normalize_name')) {
+  function chr_template_normalize_name(string $name): string {
+    $name = trim($name);
+    if ($name === '') { return ''; }
+    $name = function_exists('mb_strtolower') ? mb_strtolower($name, 'UTF-8') : strtolower($name);
+    $name = str_replace('&', ' dan ', $name);
+    $name = preg_replace('/\bdan\b/u', ' dan ', $name);
+    $name = preg_replace('/[^a-z0-9]+/u', ' ', $name);
+    $name = preg_replace('/\s+/u', ' ', (string)$name);
+    return trim((string)$name);
+  }
+}
+
+if (!function_exists('chr_template_resolve_by_review')) {
+  function chr_template_resolve_by_review(?array $rev): string {
+    $jenis = trim((string)($rev['jenis_nama'] ?? ''));
+    if ($jenis === '') { return 'chr_legacy_laporan_keuangan'; }
+    $target = chr_template_normalize_name($jenis);
+    if ($target === '') { return 'chr_legacy_laporan_keuangan'; }
+
+    foreach (chr_template_registry() as $code => $template) {
+      $aliases = $template['aliases'] ?? [];
+      $aliases[] = $template['name'] ?? '';
+      foreach ($aliases as $alias) {
+        if (chr_template_normalize_name((string)$alias) === $target) {
+          return (string)$code;
+        }
+      }
+    }
+
+    return 'chr_legacy_laporan_keuangan';
+  }
+}
+
+if (!function_exists('chr_template_resolve_for_form')) {
+  function chr_template_resolve_for_form(?array $rev, ?array $storedRow): string {
+    $storedCode = trim((string)($storedRow['template_code'] ?? ''));
+    if ($storedCode !== '' && chr_template_get($storedCode)) {
+      return $storedCode;
+    }
+
+    $storedJson = trim((string)($storedRow['data_json'] ?? ''));
+    if ($storedRow && $storedJson !== '') {
+      return 'chr_legacy_laporan_keuangan';
+    }
+
+    $resolved = chr_template_resolve_by_review($rev);
+    return chr_template_get($resolved) ? $resolved : 'chr_legacy_laporan_keuangan';
+  }
+}
+
+if (!function_exists('chr_template_version')) {
+  function chr_template_version(string $code): int {
+    $template = chr_template_get($code);
+    return $template ? max(1, (int)($template['version'] ?? 1)) : 1;
+  }
+}
+
 if (!function_exists('chr_form_defaults')) {
-  function chr_form_defaults(?array $rev = null): array {
+  function chr_form_defaults(?array $rev = null, ?string $templateCode = null): array {
+    // Tahap 1: semua template masih memakai struktur legacy. Renderer dinamis dibuat pada tahap berikutnya.
     $unitName = trim((string)($rev['unit_nama'] ?? 'Poltekkes Kemenkes Ternate'));
     if ($unitName === '') { $unitName = 'Poltekkes Kemenkes Ternate'; }
     $kode = trim((string)($rev['kode'] ?? ''));
@@ -173,6 +289,76 @@ if (!function_exists('chr_form_merge')) {
       }
     }
     return $base;
+  }
+}
+
+if (!function_exists('chr_form_strip_runtime_metadata')) {
+  function chr_form_strip_runtime_metadata(array $data): array {
+    unset($data['template_code'], $data['template_version'], $data['template']);
+    return $data;
+  }
+}
+
+if (!function_exists('chr_form_is_list_array')) {
+  function chr_form_is_list_array(array $value): bool {
+    if ($value === []) { return true; }
+    return array_keys($value) === range(0, count($value) - 1);
+  }
+}
+
+if (!function_exists('chr_form_merge_preserve_field')) {
+  function chr_form_merge_preserve_field($stored, $incoming, $default) {
+    if (is_array($incoming)) {
+      if (chr_form_is_list_array($incoming)) {
+        // Repeater/list fields from the form are treated as a complete replacement.
+        return $incoming;
+      }
+
+      $storedArr = is_array($stored) ? $stored : [];
+      $defaultArr = is_array($default) ? $default : [];
+      $result = $storedArr;
+      foreach ($incoming as $key => $value) {
+        if (!array_key_exists($key, $defaultArr) && !array_key_exists($key, $storedArr)) {
+          continue;
+        }
+        $result[$key] = chr_form_merge_preserve_field(
+          $storedArr[$key] ?? null,
+          $value,
+          $defaultArr[$key] ?? null
+        );
+      }
+      return $result;
+    }
+
+    return $incoming;
+  }
+}
+
+if (!function_exists('chr_form_merge_preserve_legacy')) {
+  function chr_form_merge_preserve_legacy(array $stored, array $incoming, array $defaults): array {
+    $stored = chr_form_strip_runtime_metadata($stored);
+    $incoming = chr_form_strip_runtime_metadata($incoming);
+    $defaults = chr_form_strip_runtime_metadata($defaults);
+
+    $result = $stored;
+    foreach ($incoming as $key => $value) {
+      if (!array_key_exists($key, $defaults) && !array_key_exists($key, $stored)) {
+        continue;
+      }
+      $result[$key] = chr_form_merge_preserve_field(
+        $stored[$key] ?? null,
+        $value,
+        $defaults[$key] ?? null
+      );
+    }
+
+    foreach ($defaults as $key => $value) {
+      if (!array_key_exists($key, $result)) {
+        $result[$key] = $value;
+      }
+    }
+
+    return chr_form_sync_signatures($result);
   }
 }
 
@@ -330,25 +516,88 @@ if (!function_exists('ensure_chr_form_schema')) {
   }
 }
 
-if (!function_exists('chr_form_fetch')) {
-  function chr_form_fetch(mysqli $conn, int $reviuId, ?array $rev = null): array {
-    $data = chr_form_defaults($rev);
-    if ($reviuId < 1) { return $data; }
-    if (!ensure_chr_form_schema($conn)) { return $data; }
-    $stmt = $conn->prepare("SELECT data_json FROM reviu_chr_form WHERE reviu_id=? LIMIT 1");
-    if (!$stmt) { return $data; }
+if (!function_exists('chr_form_column_exists')) {
+  function chr_form_column_exists(mysqli $conn, string $column): bool {
+    static $cache = [];
+    $column = trim($column);
+    if ($column === '') { return false; }
+    if (array_key_exists($column, $cache)) { return $cache[$column]; }
+    $columnEsc = $conn->real_escape_string($column);
+    $ok = false;
+    if ($rs = $conn->query("SHOW COLUMNS FROM `reviu_chr_form` LIKE '{$columnEsc}'")) {
+      $ok = $rs->num_rows > 0;
+      $rs->free();
+    }
+    $cache[$column] = $ok;
+    return $ok;
+  }
+}
+
+if (!function_exists('chr_form_fetch_stored_row')) {
+  function chr_form_fetch_stored_row(mysqli $conn, int $reviuId): ?array {
+    if ($reviuId < 1 || !ensure_chr_form_schema($conn)) { return null; }
+    $hasTemplateCode = chr_form_column_exists($conn, 'template_code');
+    $hasTemplateVersion = chr_form_column_exists($conn, 'template_version');
+    $columns = ['data_json'];
+    if (chr_form_column_exists($conn, 'updated_at')) { $columns[] = 'updated_at'; }
+    if ($hasTemplateCode) { $columns[] = 'template_code'; }
+    if ($hasTemplateVersion) { $columns[] = 'template_version'; }
+    $sql = "SELECT " . implode(', ', $columns) . " FROM reviu_chr_form WHERE reviu_id=? LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) { return null; }
     $stmt->bind_param("i", $reviuId);
+    $row = null;
     if ($stmt->execute()) {
       $res = $stmt->get_result();
-      if ($row = $res->fetch_assoc()) {
-        $json = json_decode($row['data_json'], true);
-        if (is_array($json)) {
-          $data = chr_form_merge($data, $json);
-        }
-      }
-      $res->free();
+      $row = $res ? $res->fetch_assoc() : null;
+      if ($res) { $res->free(); }
     }
     $stmt->close();
+    return $row ?: null;
+  }
+}
+
+if (!function_exists('chr_form_review_meta')) {
+  function chr_form_review_meta(mysqli $conn, int $reviuId): ?array {
+    if ($reviuId < 1) { return null; }
+    $stmt = $conn->prepare(
+      "SELECT r.id, r.jenis_id, j.nama AS jenis_nama
+       FROM reviu r
+       LEFT JOIN jenis_reviu j ON j.id = r.jenis_id
+       WHERE r.id=? LIMIT 1"
+    );
+    if (!$stmt) { return null; }
+    $stmt->bind_param("i", $reviuId);
+    $row = null;
+    if ($stmt->execute()) {
+      $res = $stmt->get_result();
+      $row = $res ? $res->fetch_assoc() : null;
+      if ($res) { $res->free(); }
+    }
+    $stmt->close();
+    return $row ?: null;
+  }
+}
+
+if (!function_exists('chr_form_fetch')) {
+  function chr_form_fetch(mysqli $conn, int $reviuId, ?array $rev = null): array {
+    $storedRow = $reviuId > 0 ? chr_form_fetch_stored_row($conn, $reviuId) : null;
+    $templateCode = chr_template_resolve_for_form($rev, $storedRow);
+    $template = chr_template_get($templateCode) ?: chr_template_get('chr_legacy_laporan_keuangan');
+    $templateVersion = chr_template_version($templateCode);
+    if ($storedRow && isset($storedRow['template_version'])) {
+      $storedVersion = (int)$storedRow['template_version'];
+      if ($storedVersion > 0) { $templateVersion = $storedVersion; }
+    }
+
+    $data = chr_form_defaults($rev, $templateCode);
+    if ($storedRow) {
+      $json = json_decode((string)($storedRow['data_json'] ?? ''), true);
+      if (is_array($json)) {
+        $data = chr_form_merge($data, $json);
+      }
+    }
+
     $data = chr_form_sync_signatures($data);
     $data['direktur_signature'] = chr_sanitize_signature($data['direktur_signature'] ?? '');
     $data['ketua_signature'] = chr_sanitize_signature($data['ketua_signature'] ?? '');
@@ -359,21 +608,70 @@ if (!function_exists('chr_form_fetch')) {
       $data['anggota_signatures'][$idx] = chr_sanitize_signature($sig);
     }
     $data = chr_form_sync_signatures($data);
+    $data['template_code'] = $templateCode;
+    $data['template_version'] = $templateVersion;
+    $data['template'] = $template ?: [];
     return $data;
   }
 }
 
 if (!function_exists('chr_form_save')) {
-  function chr_form_save(mysqli $conn, int $reviuId, array $data): bool {
+  function chr_form_save(mysqli $conn, int $reviuId, array $data, ?array $rev = null): bool {
     if ($reviuId < 1) { return false; }
     if (!ensure_chr_form_schema($conn)) { return false; }
+
+    $hasTemplateCode = chr_form_column_exists($conn, 'template_code');
+    $hasTemplateVersion = chr_form_column_exists($conn, 'template_version');
+    $hasUpdatedAt = chr_form_column_exists($conn, 'updated_at');
+    $storedRow = chr_form_fetch_stored_row($conn, $reviuId);
+    if ($rev === null) {
+      $rev = chr_form_review_meta($conn, $reviuId);
+    }
+    $templateCode = chr_template_resolve_for_form($rev, $storedRow);
+    $defaults = chr_form_defaults($rev, $templateCode);
+    $storedData = [];
+    if ($storedRow) {
+      $decoded = json_decode((string)($storedRow['data_json'] ?? ''), true);
+      if (is_array($decoded)) {
+        $storedData = $decoded;
+      }
+    }
+    $data = chr_form_merge_preserve_legacy($storedData, $data, $defaults);
     $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($json === false) { return false; }
-    $stmt = $conn->prepare(
-      "INSERT INTO reviu_chr_form (reviu_id, data_json, updated_at)
-       VALUES (?, ?, NOW())
-       ON DUPLICATE KEY UPDATE data_json=VALUES(data_json), updated_at=NOW()"
-    );
+
+    if ($hasTemplateCode && $hasTemplateVersion) {
+      $templateVersion = chr_template_version($templateCode);
+      $sql = $hasUpdatedAt
+        ? "INSERT INTO reviu_chr_form (reviu_id, template_code, template_version, data_json, updated_at)
+           VALUES (?, ?, ?, ?, NOW())
+           ON DUPLICATE KEY UPDATE
+             template_code = CASE WHEN reviu_chr_form.template_code IS NULL OR reviu_chr_form.template_code = '' THEN VALUES(template_code) ELSE reviu_chr_form.template_code END,
+             template_version = CASE WHEN reviu_chr_form.template_code IS NULL OR reviu_chr_form.template_code = '' THEN VALUES(template_version) ELSE reviu_chr_form.template_version END,
+             data_json = VALUES(data_json),
+             updated_at = NOW()"
+        : "INSERT INTO reviu_chr_form (reviu_id, template_code, template_version, data_json)
+           VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             template_code = CASE WHEN reviu_chr_form.template_code IS NULL OR reviu_chr_form.template_code = '' THEN VALUES(template_code) ELSE reviu_chr_form.template_code END,
+             template_version = CASE WHEN reviu_chr_form.template_code IS NULL OR reviu_chr_form.template_code = '' THEN VALUES(template_version) ELSE reviu_chr_form.template_version END,
+             data_json = VALUES(data_json)";
+      $stmt = $conn->prepare($sql);
+      if (!$stmt) { return false; }
+      $stmt->bind_param("isis", $reviuId, $templateCode, $templateVersion, $json);
+      $ok = $stmt->execute();
+      $stmt->close();
+      return $ok;
+    }
+
+    $sql = $hasUpdatedAt
+      ? "INSERT INTO reviu_chr_form (reviu_id, data_json, updated_at)
+         VALUES (?, ?, NOW())
+         ON DUPLICATE KEY UPDATE data_json=VALUES(data_json), updated_at=NOW()"
+      : "INSERT INTO reviu_chr_form (reviu_id, data_json)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)";
+    $stmt = $conn->prepare($sql);
     if (!$stmt) { return false; }
     $stmt->bind_param("is", $reviuId, $json);
     $ok = $stmt->execute();
