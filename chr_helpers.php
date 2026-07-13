@@ -64,10 +64,88 @@ if (!function_exists('chr_sanitize_signature')) {
     if ($value === null) { return ''; }
     $value = trim((string)$value);
     if ($value === '') { return ''; }
+    if (strlen($value) > 1500000) { return ''; }
     if (!preg_match('/^data:image\/(png|jpe?g);base64,[A-Za-z0-9+\/=]+$/i', $value)) {
       return '';
     }
     return $value;
+  }
+}
+
+if (!function_exists('chr_employee_profile_schema_ready')) {
+  function chr_employee_profile_schema_ready(mysqli $conn): bool {
+    foreach (['nip', 'jabatan', 'unit_id'] as $column) {
+      $safe = $conn->real_escape_string($column);
+      $res = @$conn->query("SHOW COLUMNS FROM pengguna LIKE '{$safe}'");
+      if (!$res || $res->num_rows < 1) { return false; }
+    }
+    return true;
+  }
+}
+
+if (!function_exists('chr_employee_picker_options')) {
+  function chr_employee_picker_options(mysqli $conn): array {
+    if (!chr_employee_profile_schema_ready($conn)) { return []; }
+    $sql = "SELECT p.id, p.nama, p.nip, p.jabatan, p.unit_id, p.peran, p.status, u.nama AS unit_nama
+            FROM pengguna p
+            LEFT JOIN unit_kerja u ON u.id = p.unit_id
+            WHERE p.status = 'aktif'
+            ORDER BY
+              CASE
+                WHEN p.peran IN ('auditee_direktur','auditee_wadir1','auditee_wadir2','auditee_wadir3') THEN 0
+                WHEN p.peran IN ('auditor_ka','auditor_staff','auditor') THEN 1
+                ELSE 2
+              END,
+              p.nama ASC";
+    $result = $conn->query($sql);
+    if (!$result) { return []; }
+    $rows = [];
+    while ($row = $result->fetch_assoc()) {
+      $complete = trim((string)($row['nama'] ?? '')) !== ''
+        && trim((string)($row['nip'] ?? '')) !== ''
+        && trim((string)($row['jabatan'] ?? '')) !== ''
+        && (int)($row['unit_id'] ?? 0) > 0
+        && trim((string)($row['unit_nama'] ?? '')) !== '';
+      $row['profile_complete'] = $complete ? 1 : 0;
+      $rows[] = $row;
+    }
+    return $rows;
+  }
+}
+
+if (!function_exists('chr_employee_profile_fetch')) {
+  function chr_employee_profile_fetch(mysqli $conn, int $userId): ?array {
+    if ($userId < 1 || !chr_employee_profile_schema_ready($conn)) { return null; }
+    $sql = "SELECT p.id, p.nama, p.nip, p.jabatan, p.unit_id, p.status, u.nama AS unit_nama
+            FROM pengguna p
+            LEFT JOIN unit_kerja u ON u.id = p.unit_id
+            WHERE p.id = ? AND p.status = 'aktif'
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) { return null; }
+    $stmt->bind_param('i', $userId);
+    if (!$stmt->execute()) {
+      $stmt->close();
+      return null;
+    }
+    $row = $stmt->get_result()->fetch_assoc() ?: null;
+    $stmt->close();
+    if (!$row) { return null; }
+    if (trim((string)($row['nama'] ?? '')) === ''
+      || trim((string)($row['nip'] ?? '')) === ''
+      || trim((string)($row['jabatan'] ?? '')) === ''
+      || (int)($row['unit_id'] ?? 0) < 1
+      || trim((string)($row['unit_nama'] ?? '')) === '') {
+      return null;
+    }
+    return [
+      'user_id' => (int)$row['id'],
+      'nama' => (string)$row['nama'],
+      'nip' => (string)$row['nip'],
+      'jabatan' => (string)$row['jabatan'],
+      'unit_id' => (int)$row['unit_id'],
+      'unit' => (string)$row['unit_nama'],
+    ];
   }
 }
 
@@ -97,6 +175,25 @@ if (!function_exists('chr_template_registry')) {
     if (!is_array($loaded)) {
       $registry = $fallback;
       return $registry;
+    }
+
+    foreach ([
+      'chr_sop' => 'chr_template_sop.php',
+      'chr_rkakl' => 'chr_template_rkakl.php',
+      'chr_manajemen_risiko' => 'chr_template_manajemen_risiko.php',
+      'chr_pengembangan_pegawai' => 'chr_template_pengembangan_pegawai.php',
+      'chr_lhkpn_lhkasn' => 'chr_template_lhkpn_lhkasn.php',
+      'chr_iku_ikt' => 'chr_template_iku_ikt.php',
+      'chr_lkj' => 'chr_template_lkj.php',
+      'chr_pipk' => 'chr_template_pipk.php',
+      'chr_rkbmn' => 'chr_template_rkbmn.php',
+    ] as $expectedCode => $fileName) {
+      $templatePath = __DIR__ . '/' . $fileName;
+      if (!is_file($templatePath)) { continue; }
+      $templateFile = require $templatePath;
+      if (is_array($templateFile) && (($templateFile['code'] ?? '') === $expectedCode)) {
+        $loaded[$expectedCode] = array_replace_recursive($loaded[$expectedCode] ?? [], $templateFile);
+      }
     }
 
     $registry = [];
@@ -165,16 +262,22 @@ if (!function_exists('chr_template_resolve_by_review')) {
 if (!function_exists('chr_template_resolve_for_form')) {
   function chr_template_resolve_for_form(?array $rev, ?array $storedRow): string {
     $storedCode = trim((string)($storedRow['template_code'] ?? ''));
+    $resolved = chr_template_resolve_by_review($rev);
     if ($storedCode !== '' && chr_template_get($storedCode)) {
+      if ($resolved === 'chr_rkakl' && in_array($storedCode, ['chr_rkakl', 'chr_legacy_laporan_keuangan'], true)) {
+        return 'chr_rkakl';
+      }
       return $storedCode;
     }
 
     $storedJson = trim((string)($storedRow['data_json'] ?? ''));
     if ($storedRow && $storedJson !== '') {
+      if ($resolved === 'chr_rkakl') {
+        return 'chr_rkakl';
+      }
       return 'chr_legacy_laporan_keuangan';
     }
 
-    $resolved = chr_template_resolve_by_review($rev);
     return chr_template_get($resolved) ? $resolved : 'chr_legacy_laporan_keuangan';
   }
 }
@@ -183,6 +286,53 @@ if (!function_exists('chr_template_version')) {
   function chr_template_version(string $code): int {
     $template = chr_template_get($code);
     return $template ? max(1, (int)($template['version'] ?? 1)) : 1;
+  }
+}
+
+if (!function_exists('chr_template_uses_standard_approval')) {
+  function chr_template_uses_standard_approval(string $code): bool {
+    return in_array($code, chr_approval_template_codes(), true);
+  }
+}
+
+if (!function_exists('chr_approval_template_codes')) {
+  function chr_approval_template_codes(): array {
+    return [
+      'chr_sop',
+      'chr_rkakl',
+      'chr_manajemen_risiko',
+      'chr_pengembangan_pegawai',
+      'chr_lhkpn_lhkasn',
+      'chr_iku_ikt',
+      'chr_lkj',
+      'chr_pipk',
+      'chr_rkbmn',
+    ];
+  }
+}
+
+if (!function_exists('chr_dynamic_template_subtitle')) {
+  function chr_dynamic_template_subtitle(string $templateCode): string {
+    return [
+      'chr_rkakl' => 'REVIU RKA/RKAKL',
+      'chr_manajemen_risiko' => 'MANAJEMEN RISIKO',
+      'chr_pengembangan_pegawai' => 'PENGEMBANGAN PEGAWAI',
+      'chr_lhkpn_lhkasn' => 'LHKPN DAN LHKASN',
+      'chr_iku_ikt' => 'IKU-IKT',
+      'chr_lkj' => 'LAPORAN KINERJA',
+      'chr_pipk' => 'PIPK TINGKAT SATKER',
+      'chr_rkbmn' => 'RKBMN',
+    ][$templateCode] ?? 'REVIU STANDAR OPERASIONAL PROSEDUR';
+  }
+}
+
+if (!function_exists('chr_template_display_name')) {
+  function chr_template_display_name(string $templateCode): string {
+    $template = chr_template_get($templateCode);
+    if ($template && trim((string)($template['name'] ?? '')) !== '') {
+      return (string)$template['name'];
+    }
+    return 'CHR';
   }
 }
 
@@ -359,6 +509,889 @@ if (!function_exists('chr_form_merge_preserve_legacy')) {
     }
 
     return chr_form_sync_signatures($result);
+  }
+}
+
+if (!function_exists('chr_form_has_legacy_signatures')) {
+  function chr_form_has_legacy_signatures(array $data): bool {
+    if (trim((string)($data['direktur_signature'] ?? '')) !== '') { return true; }
+    if (trim((string)($data['ketua_signature'] ?? '')) !== '') { return true; }
+    if (isset($data['anggota_signatures']) && is_array($data['anggota_signatures'])) {
+      foreach ($data['anggota_signatures'] as $signature) {
+        if (trim((string)$signature) !== '') { return true; }
+      }
+    }
+    foreach (['direktur', 'ketua'] as $key) {
+      if (!isset($data[$key]) || !is_array($data[$key])) { continue; }
+      foreach (['nama', 'nip'] as $field) {
+        if (trim((string)($data[$key][$field] ?? '')) !== '') { return true; }
+      }
+    }
+    $ketua = isset($data['ketua']) && is_array($data['ketua']) ? $data['ketua'] : [];
+    $ketuaJabatan = trim((string)($ketua['jabatan'] ?? ''));
+    if ($ketuaJabatan !== '' && strcasecmp($ketuaJabatan, 'Ketua Tim') !== 0) { return true; }
+    if (isset($data['anggota_list']) && is_array($data['anggota_list'])) {
+      foreach ($data['anggota_list'] as $row) {
+        if (!is_array($row)) { continue; }
+        foreach (['nama', 'nip'] as $field) {
+          if (trim((string)($row[$field] ?? '')) !== '') { return true; }
+        }
+      }
+    }
+    return false;
+  }
+}
+
+if (!function_exists('chr_form_has_legacy_signature_structure')) {
+  function chr_form_has_legacy_signature_structure(array $data): bool {
+    foreach (['direktur', 'ketua', 'anggota_list', 'direktur_signature', 'ketua_signature', 'anggota_signatures'] as $key) {
+      if (array_key_exists($key, $data)) { return true; }
+    }
+    return false;
+  }
+}
+
+if (!function_exists('chr_rkakl_approval_mode')) {
+  function chr_rkakl_approval_mode(array $data, ?array $rev = null): string {
+    $templateCode = (string)($data['template_code'] ?? '');
+    $resolvedByReview = $rev ? chr_template_resolve_by_review($rev) : '';
+    if ($templateCode !== 'chr_rkakl' && $resolvedByReview !== 'chr_rkakl') { return 'not_rkakl'; }
+    $dynamic = isset($data['dynamic']) && is_array($data['dynamic']) ? $data['dynamic'] : [];
+    $pengesahan = isset($dynamic['pengesahan']) && is_array($dynamic['pengesahan']) ? $dynamic['pengesahan'] : [];
+    if ($pengesahan) { return 'standard'; }
+    return 'legacy';
+  }
+}
+
+if (!function_exists('chr_dynamic_first_nonempty')) {
+  function chr_dynamic_first_nonempty(?array $source, array $keys): string {
+    foreach ($keys as $key) {
+      $value = trim((string)($source[$key] ?? ''));
+      if ($value !== '') { return $value; }
+    }
+    return '';
+  }
+}
+
+if (!function_exists('chr_dynamic_field_default')) {
+  function chr_dynamic_field_default(array $field, ?array $rev = null) {
+    $type = (string)($field['type'] ?? 'text');
+    if ($type === 'repeater') {
+      $rows = [];
+      $minRows = max(0, (int)($field['min_rows'] ?? 0));
+      for ($i = 0; $i < $minRows; $i++) {
+        $row = [];
+        foreach (($field['columns'] ?? []) as $column) {
+          if (!is_array($column)) { continue; }
+          $row[(string)($column['key'] ?? '')] = '';
+        }
+        $rows[] = $row;
+      }
+      return $rows;
+    }
+    if ($type === 'signature') {
+      return [
+        'user_id' => '',
+        'document_role' => '',
+        'document_role_label' => '',
+        'nama' => '',
+        'nip' => '',
+        'jabatan' => '',
+        'unit_id' => '',
+        'unit' => '',
+        'tanggal' => '',
+        'lokasi' => '',
+        'signature' => '',
+        'status_signature' => 'waiting',
+        'signed_at' => '',
+        'signed_ip' => '',
+        'signed_user_agent' => '',
+      ];
+    }
+    return (string)($field['default'] ?? '');
+  }
+}
+
+if (!function_exists('chr_dynamic_defaults')) {
+  function chr_dynamic_defaults(array $template, ?array $rev = null): array {
+    $dynamic = [];
+    foreach (($template['sections'] ?? []) as $section) {
+      if (!is_array($section)) { continue; }
+      $sectionKey = (string)($section['key'] ?? '');
+      if ($sectionKey === '') { continue; }
+      $dynamic[$sectionKey] = [];
+      foreach (($section['fields'] ?? []) as $field) {
+        if (!is_array($field)) { continue; }
+        $fieldKey = (string)($field['key'] ?? '');
+        if ($fieldKey === '') { continue; }
+        $dynamic[$sectionKey][$fieldKey] = chr_dynamic_field_default($field, $rev);
+      }
+    }
+
+    if (isset($dynamic['identitas'])) {
+      $unitName = chr_dynamic_first_nonempty($rev, ['unit_nama']);
+      $kode = chr_dynamic_first_nonempty($rev, ['kode']);
+      $periode = chr_dynamic_first_nonempty($rev, ['periode', 'periode_label', 'periode_selesai', 'tanggal_selesai']);
+      $tanggal = chr_dynamic_first_nonempty($rev, ['tanggal', 'tanggal_mulai', 'created_at']);
+      $dynamic['identitas']['header_baris_1'] = 'Kementerian Kesehatan RI';
+      $dynamic['identitas']['header_baris_2'] = $unitName;
+      $templateCode = (string)($template['code'] ?? '');
+      $dynamic['identitas']['judul_dokumen'] = 'CATATAN HASIL REVIU';
+      $dynamic['identitas']['subjudul'] = chr_dynamic_template_subtitle($templateCode);
+      if ($templateCode === 'chr_rkakl') {
+        $dynamic['identitas']['kementerian_lembaga'] = 'Kementerian Kesehatan RI';
+        $dynamic['identitas']['apip'] = 'Satuan Kepatuhan Intern';
+        $dynamic['identitas']['eselon_unit'] = $unitName;
+        $dynamic['identitas']['tahun_anggaran'] = $periode !== '' && preg_match('/\b(20\d{2})\b/', $periode, $m) ? $m[1] : '';
+      }
+      if ($templateCode === 'chr_manajemen_risiko') {
+        $dynamic['identitas']['judul_dokumen'] = 'CATATAN HASIL REVIU';
+        $dynamic['identitas']['subjudul'] = 'MANAJEMEN RISIKO';
+        $dynamic['identitas']['entitas'] = 'Poltekkes Kemenkes Ternate';
+        $dynamic['identitas']['unit_yang_direviu'] = $unitName;
+      }
+      if (in_array($templateCode, ['chr_pengembangan_pegawai', 'chr_lhkpn_lhkasn', 'chr_iku_ikt', 'chr_lkj', 'chr_pipk', 'chr_rkbmn'], true)) {
+        $dynamic['identitas']['entitas'] = 'Poltekkes Kemenkes Ternate';
+        $dynamic['identitas']['unit_yang_direviu'] = $unitName !== '' ? $unitName : 'Seluruh Unit Kerja';
+      }
+      if (in_array($templateCode, ['chr_lkj', 'chr_pipk', 'chr_rkbmn'], true)) {
+        $dynamic['identitas']['tahun_anggaran'] = $periode !== '' && preg_match('/\b(20\d{2})\b/', $periode, $m) ? $m[1] : '';
+      }
+      $dynamic['identitas']['unit_kerja'] = $unitName;
+      $dynamic['identitas']['periode'] = $periode;
+      $dynamic['identitas']['nomor_chr'] = $kode;
+      $dynamic['identitas']['tanggal_chr'] = preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal) ? $tanggal : '';
+      $dynamic['identitas']['nomor_surat_tugas'] = chr_dynamic_first_nonempty($rev, ['nomor_surat_tugas', 'no_surat_tugas']);
+      $stDate = chr_dynamic_first_nonempty($rev, ['tanggal_surat_tugas', 'tgl_surat_tugas']);
+      $dynamic['identitas']['tanggal_surat_tugas'] = preg_match('/^\d{4}-\d{2}-\d{2}$/', $stDate) ? $stDate : '';
+    }
+
+    if (($template['code'] ?? '') === 'chr_rkakl' && isset($dynamic['pemeriksaan']['aspek_reviu']) && is_array($dynamic['pemeriksaan']['aspek_reviu'])) {
+      $aspects = [
+        'Kesesuaian dengan RKP dan Renja-K/L',
+        'Kesesuaian dengan Pagu Anggaran',
+        'Kesesuaian dengan Alokasi Anggaran',
+        'Kelengkapan Dokumen Pendukung',
+        'Kesesuaian Biaya Pemeliharaan',
+        'Kesesuaian Biaya Pengadaan',
+      ];
+      foreach ($aspects as $idx => $aspect) {
+        if (!isset($dynamic['pemeriksaan']['aspek_reviu'][$idx]) || !is_array($dynamic['pemeriksaan']['aspek_reviu'][$idx])) {
+          $dynamic['pemeriksaan']['aspek_reviu'][$idx] = [];
+        }
+        if (trim((string)($dynamic['pemeriksaan']['aspek_reviu'][$idx]['aspek'] ?? '')) === '') {
+          $dynamic['pemeriksaan']['aspek_reviu'][$idx]['aspek'] = $aspect;
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_manajemen_risiko' && isset($dynamic['komponen_reviu']['daftar_komponen']) && is_array($dynamic['komponen_reviu']['daftar_komponen'])) {
+      $components = ['Profil Risiko Unit Kerja', 'Laporan Pelaksanaan/Pemantauan Unit Kerja'];
+      foreach ($components as $idx => $component) {
+        if (!isset($dynamic['komponen_reviu']['daftar_komponen'][$idx]) || !is_array($dynamic['komponen_reviu']['daftar_komponen'][$idx])) {
+          $dynamic['komponen_reviu']['daftar_komponen'][$idx] = [];
+        }
+        if (trim((string)($dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] ?? '')) === '') {
+          $dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] = $component;
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_pengembangan_pegawai' && isset($dynamic['komponen_reviu']['daftar_komponen']) && is_array($dynamic['komponen_reviu']['daftar_komponen'])) {
+      $rows = [
+        ['kelompok' => 'Kenaikan Pangkat', 'komponen' => 'Jabatan Fungsional'],
+        ['kelompok' => 'Kenaikan Pangkat', 'komponen' => 'Jabatan Pelaksana'],
+        ['kelompok' => 'Kenaikan Jenjang Akademik', 'komponen' => 'Jabatan Fungsional'],
+      ];
+      foreach ($rows as $idx => $row) {
+        if (!isset($dynamic['komponen_reviu']['daftar_komponen'][$idx]) || !is_array($dynamic['komponen_reviu']['daftar_komponen'][$idx])) {
+          $dynamic['komponen_reviu']['daftar_komponen'][$idx] = [];
+        }
+        foreach ($row as $key => $value) {
+          if (trim((string)($dynamic['komponen_reviu']['daftar_komponen'][$idx][$key] ?? '')) === '') {
+            $dynamic['komponen_reviu']['daftar_komponen'][$idx][$key] = $value;
+          }
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_lhkpn_lhkasn') {
+      if (isset($dynamic['komponen_reviu']['daftar_komponen']) && is_array($dynamic['komponen_reviu']['daftar_komponen'])) {
+        foreach (['Kepatuhan Pelaporan', 'Keakuratan dan Kelengkapan Data', 'Kepatuhan pada Regulasi'] as $idx => $component) {
+          if (!isset($dynamic['komponen_reviu']['daftar_komponen'][$idx]) || !is_array($dynamic['komponen_reviu']['daftar_komponen'][$idx])) {
+            $dynamic['komponen_reviu']['daftar_komponen'][$idx] = [];
+          }
+          if (trim((string)($dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] ?? '')) === '') {
+            $dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] = $component;
+          }
+        }
+      }
+      if (isset($dynamic['rekap_pelaporan']['rekap']) && is_array($dynamic['rekap_pelaporan']['rekap'])) {
+        foreach (['LHKPN', 'LHKASN'] as $idx => $kind) {
+          if (!isset($dynamic['rekap_pelaporan']['rekap'][$idx]) || !is_array($dynamic['rekap_pelaporan']['rekap'][$idx])) {
+            $dynamic['rekap_pelaporan']['rekap'][$idx] = [];
+          }
+          if (trim((string)($dynamic['rekap_pelaporan']['rekap'][$idx]['jenis_laporan'] ?? '')) === '') {
+            $dynamic['rekap_pelaporan']['rekap'][$idx]['jenis_laporan'] = $kind;
+          }
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_iku_ikt' && isset($dynamic['komponen_reviu']['indikator']) && is_array($dynamic['komponen_reviu']['indikator'])) {
+      $rows = [
+        ['jenis_indikator' => 'Indikator Kinerja Utama', 'area' => 'Tata Kelola'],
+        ['jenis_indikator' => 'Indikator Kinerja Utama', 'area' => 'Pendidikan'],
+        ['jenis_indikator' => 'Indikator Kinerja Utama', 'area' => 'Penelitian dan Pengabdian kepada Masyarakat'],
+        ['jenis_indikator' => 'Indikator Kinerja Tambahan', 'area' => 'Tata Kelola'],
+        ['jenis_indikator' => 'Indikator Kinerja Tambahan', 'area' => 'Pendidikan'],
+        ['jenis_indikator' => 'Indikator Kinerja Tambahan', 'area' => 'Penelitian dan Pengabdian kepada Masyarakat'],
+      ];
+      foreach ($rows as $idx => $row) {
+        if (!isset($dynamic['komponen_reviu']['indikator'][$idx]) || !is_array($dynamic['komponen_reviu']['indikator'][$idx])) {
+          $dynamic['komponen_reviu']['indikator'][$idx] = [];
+        }
+        foreach ($row as $key => $value) {
+          if (trim((string)($dynamic['komponen_reviu']['indikator'][$idx][$key] ?? '')) === '') {
+            $dynamic['komponen_reviu']['indikator'][$idx][$key] = $value;
+          }
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_lkj' && isset($dynamic['komponen_reviu']['daftar_komponen']) && is_array($dynamic['komponen_reviu']['daftar_komponen'])) {
+      foreach (['Format Laporan Kinerja', 'Mekanisme Penyusunan Laporan Kinerja', 'Substansi Laporan Kinerja', 'Catatan Permasalahan Lainnya'] as $idx => $component) {
+        if (!isset($dynamic['komponen_reviu']['daftar_komponen'][$idx]) || !is_array($dynamic['komponen_reviu']['daftar_komponen'][$idx])) {
+          $dynamic['komponen_reviu']['daftar_komponen'][$idx] = [];
+        }
+        if (trim((string)($dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] ?? '')) === '') {
+          $dynamic['komponen_reviu']['daftar_komponen'][$idx]['komponen'] = $component;
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_pipk') {
+      if (isset($dynamic['tingkat_unit']['unit_akuntansi']) && is_array($dynamic['tingkat_unit']['unit_akuntansi'])) {
+        foreach (['UPPA', 'UAPPA-E1', 'UAPPA-W', 'UAKPA'] as $idx => $level) {
+          if (!isset($dynamic['tingkat_unit']['unit_akuntansi'][$idx]) || !is_array($dynamic['tingkat_unit']['unit_akuntansi'][$idx])) {
+            $dynamic['tingkat_unit']['unit_akuntansi'][$idx] = [];
+          }
+          if (trim((string)($dynamic['tingkat_unit']['unit_akuntansi'][$idx]['tingkat'] ?? '')) === '') {
+            $dynamic['tingkat_unit']['unit_akuntansi'][$idx]['tingkat'] = $level;
+          }
+        }
+      }
+      if (isset($dynamic['komponen_pipk']['daftar_komponen']) && is_array($dynamic['komponen_pipk']['daftar_komponen'])) {
+        $components = ['Identifikasi Risiko dan Kecukupan Rancangan Pengendalian', 'Perbaikan Identifikasi Risiko dan Pengendalian', 'Pengujian Pengendalian Intern Tingkat Entitas', 'Pengujian PUTIK', 'Pengujian Atribut Pengendalian', 'Pengujian Pengendalian Aplikasi', 'Penilaian Efektivitas Implementasi Pengendalian'];
+        foreach ($components as $idx => $component) {
+          if (!isset($dynamic['komponen_pipk']['daftar_komponen'][$idx]) || !is_array($dynamic['komponen_pipk']['daftar_komponen'][$idx])) {
+            $dynamic['komponen_pipk']['daftar_komponen'][$idx] = [];
+          }
+          if (trim((string)($dynamic['komponen_pipk']['daftar_komponen'][$idx]['komponen'] ?? '')) === '') {
+            $dynamic['komponen_pipk']['daftar_komponen'][$idx]['komponen'] = $component;
+          }
+        }
+      }
+    }
+
+    if (($template['code'] ?? '') === 'chr_rkbmn' && isset($dynamic['kelengkapan_dokumen']['checklist']) && is_array($dynamic['kelengkapan_dokumen']['checklist'])) {
+      $docs = [
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Surat Pernyataan Tanggung Jawab Mutlak (SPTJM)'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Hasil Penelitian RKBMN oleh Pengguna Barang'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Data tanah dan/atau bangunan existing yang terindikasi idle'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Dokumen rencana BMN untuk dihapuskan/dihentikan/dipindahtangankan/dimanfaatkan/dimusnahkan'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Dokumen hasil pembahasan dengan bidang Pekerjaan Umum jika relevan'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Renstra K/L atau dokumen yang disetarakan'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Hasil Pengusulan Penyediaan Anggaran pada RKBMN tahun sebelumnya'],
+        ['kategori' => 'Kelengkapan Dokumen', 'dokumen' => 'Dokumen pendukung terkait lainnya'],
+      ];
+      foreach ($docs as $idx => $row) {
+        if (!isset($dynamic['kelengkapan_dokumen']['checklist'][$idx]) || !is_array($dynamic['kelengkapan_dokumen']['checklist'][$idx])) {
+          $dynamic['kelengkapan_dokumen']['checklist'][$idx] = [];
+        }
+        foreach ($row as $key => $value) {
+          if (trim((string)($dynamic['kelengkapan_dokumen']['checklist'][$idx][$key] ?? '')) === '') {
+            $dynamic['kelengkapan_dokumen']['checklist'][$idx][$key] = $value;
+          }
+        }
+      }
+    }
+
+    return ['dynamic' => $dynamic];
+  }
+}
+
+if (!function_exists('chr_dynamic_clean_scalar')) {
+  function chr_dynamic_clean_scalar($value, string $type, array $options = []): string {
+    $value = trim((string)$value);
+    if ($type === 'signature_data') {
+      return chr_sanitize_signature($value);
+    }
+    $limit = $type === 'textarea' ? 20000 : 1000;
+    if (function_exists('mb_substr')) {
+      $value = mb_substr($value, 0, $limit, 'UTF-8');
+    } else {
+      $value = substr($value, 0, $limit);
+    }
+    $value = strip_tags($value);
+    if ($type === 'date') {
+      return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) ? $value : '';
+    }
+    if ($type === 'number') {
+      $normalized = str_replace(',', '.', preg_replace('/[^0-9,\.\-]+/', '', $value));
+      return is_numeric($normalized) ? $normalized : '';
+    }
+    if ($type === 'select') {
+      return in_array($value, $options, true) ? $value : '';
+    }
+    return $value;
+  }
+}
+
+if (!function_exists('chr_dynamic_row_empty')) {
+  function chr_dynamic_row_empty(array $row): bool {
+    foreach ($row as $value) {
+      if (trim((string)$value) !== '') { return false; }
+    }
+    return true;
+  }
+}
+
+if (!function_exists('chr_dynamic_normalize_field')) {
+  function chr_dynamic_normalize_field(array $field, $input) {
+    $type = (string)($field['type'] ?? 'text');
+    if ($type === 'repeater') {
+      $rows = is_array($input) ? array_values($input) : [];
+      $cleanRows = [];
+      $columns = isset($field['columns']) && is_array($field['columns']) ? $field['columns'] : [];
+      foreach (array_slice($rows, 0, 200) as $row) {
+        if (!is_array($row)) { continue; }
+        $cleanRow = [];
+        foreach ($columns as $column) {
+          if (!is_array($column)) { continue; }
+          $key = (string)($column['key'] ?? '');
+          if ($key === '') { continue; }
+          $cleanRow[$key] = chr_dynamic_clean_scalar($row[$key] ?? '', (string)($column['type'] ?? 'text'), $column['options'] ?? []);
+        }
+        if (!chr_dynamic_row_empty($cleanRow)) {
+          $cleanRows[] = $cleanRow;
+        }
+      }
+      $minRows = max(0, (int)($field['min_rows'] ?? 0));
+      while (count($cleanRows) < $minRows) {
+        $empty = [];
+        foreach ($columns as $column) {
+          if (is_array($column) && ($column['key'] ?? '') !== '') {
+            $empty[(string)$column['key']] = '';
+          }
+        }
+        $cleanRows[] = $empty;
+      }
+      return $cleanRows;
+    }
+    if ($type === 'signature') {
+      $source = is_array($input) ? $input : [];
+      return [
+        'nama' => chr_dynamic_clean_scalar($source['nama'] ?? '', 'text'),
+        'nip' => chr_dynamic_clean_scalar($source['nip'] ?? '', 'text'),
+        'jabatan' => chr_dynamic_clean_scalar($source['jabatan'] ?? '', 'text'),
+        'user_id' => chr_dynamic_clean_scalar($source['user_id'] ?? '', 'text'),
+        'document_role' => chr_dynamic_clean_scalar($source['document_role'] ?? '', 'text'),
+        'document_role_label' => chr_dynamic_clean_scalar($source['document_role_label'] ?? '', 'text'),
+        'unit_id' => chr_dynamic_clean_scalar($source['unit_id'] ?? '', 'text'),
+        'unit' => chr_dynamic_clean_scalar($source['unit'] ?? '', 'text'),
+        'tanggal' => chr_dynamic_clean_scalar($source['tanggal'] ?? '', 'date'),
+        'lokasi' => chr_dynamic_clean_scalar($source['lokasi'] ?? '', 'text'),
+        'signature' => chr_dynamic_clean_scalar($source['signature'] ?? '', 'signature_data'),
+        'status_signature' => chr_dynamic_clean_scalar($source['status_signature'] ?? '', 'text'),
+        'signed_at' => chr_dynamic_clean_scalar($source['signed_at'] ?? '', 'text'),
+        'signed_ip' => chr_dynamic_clean_scalar($source['signed_ip'] ?? '', 'text'),
+        'signed_user_agent' => chr_dynamic_clean_scalar($source['signed_user_agent'] ?? '', 'text'),
+      ];
+    }
+    return chr_dynamic_clean_scalar($input ?? '', $type, $field['options'] ?? []);
+  }
+}
+
+if (!function_exists('chr_sop_signer_has_snapshot')) {
+  function chr_sop_signer_has_snapshot($signer): bool {
+    if (!is_array($signer)) { return false; }
+    foreach (['nama', 'nip', 'jabatan', 'unit', 'signature'] as $key) {
+      if (trim((string)($signer[$key] ?? '')) !== '') { return true; }
+    }
+    return false;
+  }
+}
+
+if (!function_exists('chr_sop_apply_signer_profile')) {
+  function chr_sop_apply_signer_profile(mysqli $conn, array $input, array $stored, string $documentRole, string $documentRoleLabel, array &$seen, array &$errors, int $currentUserId = 0, array $requestMeta = [], bool $locked = false): array {
+    $userId = $locked && (int)($stored['user_id'] ?? 0) > 0
+      ? (int)$stored['user_id']
+      : (int)($input['user_id'] ?? 0);
+    if ($userId < 1) {
+      if (chr_sop_signer_has_snapshot($stored)) {
+        return $stored;
+      }
+      return [
+        'user_id' => '',
+        'document_role' => $documentRole,
+        'document_role_label' => $documentRoleLabel,
+        'nama' => '',
+        'nip' => '',
+        'jabatan' => '',
+        'unit_id' => '',
+        'unit' => '',
+        'tanggal' => '',
+        'lokasi' => '',
+        'signature' => '',
+        'status_signature' => 'waiting',
+        'signed_at' => '',
+        'signed_ip' => '',
+        'signed_user_agent' => '',
+      ];
+    }
+
+    $seenKey = $documentRole.'|'.$userId;
+    if (isset($seen[$seenKey])) {
+      $errors[] = 'Pegawai yang sama tidak boleh dipilih lebih dari sekali pada posisi '.$documentRoleLabel.'.';
+    } else {
+      $seen[$seenKey] = $documentRoleLabel;
+    }
+
+    $profile = chr_employee_profile_fetch($conn, $userId);
+    if (!$profile) {
+      $errors[] = $documentRoleLabel.' harus memilih pegawai aktif dengan profil lengkap.';
+      $profile = [
+        'user_id' => $userId,
+        'nama' => '',
+        'nip' => '',
+        'jabatan' => '',
+        'unit_id' => '',
+        'unit' => '',
+      ];
+    }
+
+    $oldUserId = (int)($stored['user_id'] ?? 0);
+    $storedSignature = chr_dynamic_clean_scalar($stored['signature'] ?? '', 'signature_data');
+    $inputSignature = chr_dynamic_clean_scalar($input['signature'] ?? '', 'signature_data');
+    $signature = ($oldUserId === $userId && $storedSignature !== '') ? $storedSignature : '';
+    $signedAt = ($oldUserId === $userId) ? chr_dynamic_clean_scalar($stored['signed_at'] ?? '', 'text') : '';
+    $signedIp = ($oldUserId === $userId) ? chr_dynamic_clean_scalar($stored['signed_ip'] ?? '', 'text') : '';
+    $signedUserAgent = ($oldUserId === $userId) ? chr_dynamic_clean_scalar($stored['signed_user_agent'] ?? '', 'text') : '';
+
+    if ($inputSignature !== '' && $inputSignature !== $storedSignature) {
+      if ($currentUserId !== $userId) {
+        $errors[] = 'Anda tidak memiliki hak untuk menandatangani bagian ini.';
+      } else {
+        $signature = $inputSignature;
+        $signedAt = date('Y-m-d H:i:s');
+        $signedIp = chr_dynamic_clean_scalar($requestMeta['ip'] ?? '', 'text');
+        $signedUserAgent = chr_dynamic_clean_scalar($requestMeta['user_agent'] ?? '', 'text');
+      }
+    } elseif ($inputSignature === '' && $storedSignature !== '' && $currentUserId === $userId && (int)($input['clear_signature'] ?? 0) === 1) {
+      $signature = '';
+      $signedAt = '';
+      $signedIp = '';
+      $signedUserAgent = '';
+    }
+
+    $statusSignature = $signature !== '' ? 'signed' : 'waiting';
+
+    return [
+      'user_id' => (string)$profile['user_id'],
+      'document_role' => $documentRole,
+      'document_role_label' => $documentRoleLabel,
+      'nama' => (string)$profile['nama'],
+      'nip' => (string)$profile['nip'],
+      'jabatan' => (string)$profile['jabatan'],
+      'unit_id' => (string)$profile['unit_id'],
+      'unit' => (string)$profile['unit'],
+      'tanggal' => chr_dynamic_clean_scalar($input['tanggal'] ?? '', 'date'),
+      'lokasi' => chr_dynamic_clean_scalar($input['lokasi'] ?? '', 'text'),
+      'signature' => $signature,
+      'status_signature' => $statusSignature,
+      'signed_at' => $signedAt,
+      'signed_ip' => $signedIp,
+      'signed_user_agent' => $signedUserAgent,
+    ];
+  }
+}
+
+if (!function_exists('chr_sop_apply_employee_profiles')) {
+  function chr_sop_apply_employee_profiles(mysqli $conn, array $dynamic, array $storedDynamic, array &$errors, int $currentUserId = 0, array $requestMeta = [], bool $locked = false): array {
+    if (!isset($dynamic['pengesahan']) || !is_array($dynamic['pengesahan'])) { return $dynamic; }
+    $seen = [];
+    $storedSigners = isset($storedDynamic['pengesahan']) && is_array($storedDynamic['pengesahan']) ? $storedDynamic['pengesahan'] : [];
+
+    $roleMap = [
+      'pejabat_menyetujui' => ['approving_official', 'Pejabat Menyetujui'],
+      'ketua_tim' => ['team_leader', 'Ketua Tim'],
+    ];
+    foreach ($roleMap as $key => $roleInfo) {
+      $input = isset($dynamic['pengesahan'][$key]) && is_array($dynamic['pengesahan'][$key]) ? $dynamic['pengesahan'][$key] : [];
+      $stored = isset($storedSigners[$key]) && is_array($storedSigners[$key]) ? $storedSigners[$key] : [];
+      $dynamic['pengesahan'][$key] = chr_sop_apply_signer_profile($conn, $input, $stored, $roleInfo[0], $roleInfo[1], $seen, $errors, $currentUserId, $requestMeta, $locked);
+    }
+
+    $rows = isset($dynamic['pengesahan']['anggota_tim']) && is_array($dynamic['pengesahan']['anggota_tim'])
+      ? array_values($dynamic['pengesahan']['anggota_tim'])
+      : [];
+    $storedRows = isset($storedSigners['anggota_tim']) && is_array($storedSigners['anggota_tim'])
+      ? array_values($storedSigners['anggota_tim'])
+      : [];
+    $cleanRows = [];
+    foreach ($rows as $idx => $row) {
+      $input = is_array($row) ? $row : [];
+      $stored = isset($storedRows[$idx]) && is_array($storedRows[$idx]) ? $storedRows[$idx] : [];
+      if ((int)($input['user_id'] ?? 0) < 1 && !chr_sop_signer_has_snapshot($stored)) {
+        $hasNewData = false;
+        foreach (['nama', 'nip', 'jabatan', 'unit', 'signature'] as $key) {
+          if (trim((string)($input[$key] ?? '')) !== '') { $hasNewData = true; break; }
+        }
+        if (!$hasNewData) { continue; }
+      }
+      $cleanRows[] = chr_sop_apply_signer_profile($conn, $input, $stored, 'team_member', 'Anggota Tim', $seen, $errors, $currentUserId, $requestMeta, $locked);
+    }
+    if (!$cleanRows) {
+      $cleanRows[] = [
+        'user_id' => '',
+        'document_role' => 'team_member',
+        'document_role_label' => 'Anggota Tim',
+        'nama' => '',
+        'nip' => '',
+        'jabatan' => '',
+        'unit_id' => '',
+        'unit' => '',
+        'tanggal' => '',
+        'lokasi' => '',
+        'signature' => '',
+        'status_signature' => 'waiting',
+        'signed_at' => '',
+        'signed_ip' => '',
+        'signed_user_agent' => '',
+      ];
+    }
+    $dynamic['pengesahan']['anggota_tim'] = $cleanRows;
+    return $dynamic;
+  }
+}
+
+if (!function_exists('chr_sop_collect_signers')) {
+  function chr_sop_collect_signers(array $data): array {
+    $dynamic = isset($data['dynamic']) && is_array($data['dynamic']) ? $data['dynamic'] : [];
+    $pengesahan = isset($dynamic['pengesahan']) && is_array($dynamic['pengesahan']) ? $dynamic['pengesahan'] : [];
+    $out = [];
+    foreach (['pejabat_menyetujui', 'ketua_tim'] as $key) {
+      if (isset($pengesahan[$key]) && is_array($pengesahan[$key])) {
+        $out[] = $pengesahan[$key];
+      }
+    }
+    if (isset($pengesahan['anggota_tim']) && is_array($pengesahan['anggota_tim'])) {
+      foreach ($pengesahan['anggota_tim'] as $row) {
+        if (is_array($row)) { $out[] = $row; }
+      }
+    }
+    return $out;
+  }
+}
+
+if (!function_exists('chr_sop_signature_anchor')) {
+  function chr_sop_signature_anchor(string $documentRole, int $memberIndex = -1): string {
+    if ($documentRole === 'approving_official') {
+      return 'approval-approving-official';
+    }
+    if ($documentRole === 'team_leader') {
+      return 'approval-team-leader';
+    }
+    if ($documentRole === 'team_member') {
+      return 'approval-team-member-' . max(0, $memberIndex);
+    }
+    return 'approval-section';
+  }
+}
+
+if (!function_exists('chr_sop_workflow_default')) {
+  function chr_sop_workflow_default(): array {
+    return [
+      'status' => 'draft',
+      'submitted_at' => '',
+      'submitted_by' => '',
+      'returned_at' => '',
+      'returned_by' => '',
+      'return_note' => '',
+      'reopened_at' => '',
+      'reopened_by' => '',
+    ];
+  }
+}
+
+if (!function_exists('chr_sop_workflow')) {
+  function chr_sop_workflow(array $data): array {
+    $workflow = isset($data['workflow']) && is_array($data['workflow']) ? $data['workflow'] : [];
+    return array_merge(chr_sop_workflow_default(), $workflow);
+  }
+}
+
+if (!function_exists('chr_sop_required_signers_ready')) {
+  function chr_sop_required_signers_ready(array $data, array &$errors = []): bool {
+    $dynamic = isset($data['dynamic']) && is_array($data['dynamic']) ? $data['dynamic'] : [];
+    $pengesahan = isset($dynamic['pengesahan']) && is_array($dynamic['pengesahan']) ? $dynamic['pengesahan'] : [];
+    foreach (['pejabat_menyetujui' => 'Pejabat Menyetujui', 'ketua_tim' => 'Ketua Tim'] as $key => $label) {
+      $signer = isset($pengesahan[$key]) && is_array($pengesahan[$key]) ? $pengesahan[$key] : [];
+      if ((int)($signer['user_id'] ?? 0) < 1) {
+        $errors[] = $label.' wajib dipilih sebelum pengesahan diajukan.';
+      } elseif (trim((string)($signer['nama'] ?? '')) === ''
+        || trim((string)($signer['nip'] ?? '')) === ''
+        || trim((string)($signer['jabatan'] ?? '')) === ''
+        || (int)($signer['unit_id'] ?? 0) < 1
+        || trim((string)($signer['unit'] ?? '')) === '') {
+        $errors[] = $label.' wajib memiliki profil pegawai aktif yang lengkap.';
+      }
+    }
+    $members = isset($pengesahan['anggota_tim']) && is_array($pengesahan['anggota_tim']) ? $pengesahan['anggota_tim'] : [];
+    $memberReady = false;
+    $memberSeen = [];
+    foreach ($members as $idx => $member) {
+      if (!is_array($member)) { continue; }
+      $userId = (int)($member['user_id'] ?? 0);
+      if ($userId < 1) { continue; }
+      $memberReady = true;
+      if (trim((string)($member['nama'] ?? '')) === ''
+        || trim((string)($member['nip'] ?? '')) === ''
+        || trim((string)($member['jabatan'] ?? '')) === ''
+        || (int)($member['unit_id'] ?? 0) < 1
+        || trim((string)($member['unit'] ?? '')) === '') {
+        $errors[] = 'Anggota Tim wajib memiliki profil pegawai aktif yang lengkap.';
+      }
+      if (isset($memberSeen[$userId])) {
+        $errors[] = 'Anggota Tim tidak boleh berisi pegawai yang sama lebih dari satu kali.';
+      }
+      $memberSeen[$userId] = true;
+    }
+    if (!$memberReady) {
+      $errors[] = 'Minimal satu Anggota Tim wajib dipilih sebelum pengesahan diajukan.';
+    }
+    return !$errors;
+  }
+}
+
+if (!function_exists('chr_sop_clear_signer_signature')) {
+  function chr_sop_clear_signer_signature(array $signer): array {
+    $signer['signature'] = '';
+    $signer['status_signature'] = 'waiting';
+    $signer['signed_at'] = '';
+    $signer['signed_ip'] = '';
+    $signer['signed_user_agent'] = '';
+    return $signer;
+  }
+}
+
+if (!function_exists('chr_sop_map_signers')) {
+  function chr_sop_map_signers(array $data, callable $callback): array {
+    if (!isset($data['dynamic']['pengesahan']) || !is_array($data['dynamic']['pengesahan'])) { return $data; }
+    foreach (['pejabat_menyetujui', 'ketua_tim'] as $key) {
+      if (isset($data['dynamic']['pengesahan'][$key]) && is_array($data['dynamic']['pengesahan'][$key])) {
+        $data['dynamic']['pengesahan'][$key] = $callback($data['dynamic']['pengesahan'][$key], $key);
+      }
+    }
+    if (isset($data['dynamic']['pengesahan']['anggota_tim']) && is_array($data['dynamic']['pengesahan']['anggota_tim'])) {
+      foreach ($data['dynamic']['pengesahan']['anggota_tim'] as $idx => $signer) {
+        if (is_array($signer)) {
+          $data['dynamic']['pengesahan']['anggota_tim'][$idx] = $callback($signer, 'anggota_tim');
+        }
+      }
+    }
+    return $data;
+  }
+}
+
+if (!function_exists('chr_sop_recalculate_workflow')) {
+  function chr_sop_recalculate_workflow(array $data): array {
+    $workflow = chr_sop_workflow($data);
+    if (!in_array($workflow['status'], ['waiting_signatures', 'partially_signed', 'approved'], true)) {
+      $data['workflow'] = $workflow;
+      return $data;
+    }
+    $total = 0;
+    $signed = 0;
+    foreach (chr_sop_collect_signers($data) as $signer) {
+      if ((int)($signer['user_id'] ?? 0) < 1) { continue; }
+      $total++;
+      if (trim((string)($signer['signature'] ?? '')) !== '' || ($signer['status_signature'] ?? '') === 'signed') {
+        $signed++;
+      }
+    }
+    if ($total > 0 && $signed >= $total) {
+      $workflow['status'] = 'approved';
+    } elseif ($signed > 0) {
+      $workflow['status'] = 'partially_signed';
+    } else {
+      $workflow['status'] = 'waiting_signatures';
+    }
+    $data['workflow'] = $workflow;
+    return $data;
+  }
+}
+
+if (!function_exists('chr_sop_submit_for_signatures')) {
+  function chr_sop_submit_for_signatures(array $data, int $submittedBy, array &$errors = []): array {
+    if (!chr_sop_required_signers_ready($data, $errors)) { return $data; }
+    $data = chr_sop_map_signers($data, function (array $signer): array {
+      return chr_sop_clear_signer_signature($signer);
+    });
+    $workflow = chr_sop_workflow($data);
+    $workflow['status'] = 'waiting_signatures';
+    $workflow['submitted_at'] = date('Y-m-d H:i:s');
+    $workflow['submitted_by'] = (string)$submittedBy;
+    $workflow['returned_at'] = '';
+    $workflow['returned_by'] = '';
+    $workflow['return_note'] = '';
+    $data['workflow'] = $workflow;
+    return $data;
+  }
+}
+
+if (!function_exists('chr_sop_return_for_revision')) {
+  function chr_sop_return_for_revision(array $data, int $returnedBy, string $note): array {
+    $workflow = chr_sop_workflow($data);
+    $workflow['status'] = 'returned';
+    $workflow['returned_at'] = date('Y-m-d H:i:s');
+    $workflow['returned_by'] = (string)$returnedBy;
+    $workflow['return_note'] = chr_dynamic_clean_scalar($note, 'textarea');
+    $data['workflow'] = $workflow;
+    return $data;
+  }
+}
+
+if (!function_exists('chr_sop_reopen_draft')) {
+  function chr_sop_reopen_draft(array $data, int $reopenedBy): array {
+    $data = chr_sop_map_signers($data, function (array $signer): array {
+      return chr_sop_clear_signer_signature($signer);
+    });
+    $workflow = chr_sop_workflow($data);
+    $workflow['status'] = 'draft';
+    $workflow['reopened_at'] = date('Y-m-d H:i:s');
+    $workflow['reopened_by'] = (string)$reopenedBy;
+    $data['workflow'] = $workflow;
+    return $data;
+  }
+}
+
+if (!function_exists('chr_sop_user_has_waiting_signature')) {
+  function chr_sop_user_has_waiting_signature(array $data, int $userId): bool {
+    if ($userId < 1) { return false; }
+    $workflow = chr_sop_workflow($data);
+    if (!in_array($workflow['status'], ['waiting_signatures', 'partially_signed'], true)) { return false; }
+    foreach (chr_sop_collect_signers($data) as $signer) {
+      if ((int)($signer['user_id'] ?? 0) !== $userId) { continue; }
+      $status = (string)($signer['status_signature'] ?? '');
+      $signature = trim((string)($signer['signature'] ?? ''));
+      if ($status === '') { $status = $signature !== '' ? 'signed' : 'waiting'; }
+      if ($status === 'waiting') { return true; }
+    }
+    return false;
+  }
+}
+
+if (!function_exists('chr_sop_pending_signature_tasks')) {
+  function chr_sop_pending_signature_tasks(mysqli $conn, int $userId): array {
+    if ($userId < 1 || !ensure_chr_form_schema($conn)) { return []; }
+    if (!chr_form_column_exists($conn, 'template_code')) { return []; }
+    $sql = "SELECT f.reviu_id, f.template_code, f.data_json, f.updated_at, r.kode, j.nama AS jenis_nama
+            FROM reviu_chr_form f
+            LEFT JOIN reviu r ON r.id = f.reviu_id
+            LEFT JOIN jenis_reviu j ON j.id = r.jenis_id
+            WHERE f.template_code IN ('".implode("','", array_map([$conn, 'real_escape_string'], chr_approval_template_codes()))."')
+            ORDER BY f.updated_at DESC, f.reviu_id DESC
+            LIMIT 200";
+    $res = $conn->query($sql);
+    if (!$res) { return []; }
+    $tasks = [];
+    while ($row = $res->fetch_assoc()) {
+      $decoded = json_decode((string)($row['data_json'] ?? ''), true);
+      if (!is_array($decoded)) { continue; }
+      $workflow = chr_sop_workflow($decoded);
+      if (!in_array($workflow['status'], ['waiting_signatures', 'partially_signed'], true)) { continue; }
+      $dynamic = isset($decoded['dynamic']) && is_array($decoded['dynamic']) ? $decoded['dynamic'] : [];
+      $pengesahan = isset($dynamic['pengesahan']) && is_array($dynamic['pengesahan']) ? $dynamic['pengesahan'] : [];
+      $signerItems = [];
+      if (isset($pengesahan['pejabat_menyetujui']) && is_array($pengesahan['pejabat_menyetujui'])) {
+        $signerItems[] = ['signer' => $pengesahan['pejabat_menyetujui'], 'role' => 'approving_official', 'index' => -1];
+      }
+      if (isset($pengesahan['ketua_tim']) && is_array($pengesahan['ketua_tim'])) {
+        $signerItems[] = ['signer' => $pengesahan['ketua_tim'], 'role' => 'team_leader', 'index' => -1];
+      }
+      if (isset($pengesahan['anggota_tim']) && is_array($pengesahan['anggota_tim'])) {
+        foreach (array_values($pengesahan['anggota_tim']) as $memberIndex => $memberSigner) {
+          if (is_array($memberSigner)) {
+            $signerItems[] = ['signer' => $memberSigner, 'role' => 'team_member', 'index' => (int)$memberIndex];
+          }
+        }
+      }
+      foreach ($signerItems as $signerItem) {
+        $signer = $signerItem['signer'];
+        if ((int)($signer['user_id'] ?? 0) !== $userId) { continue; }
+        $status = (string)($signer['status_signature'] ?? '');
+        $signature = trim((string)($signer['signature'] ?? ''));
+        if ($status === '') { $status = $signature !== '' ? 'signed' : 'waiting'; }
+        if ($status === 'signed') { continue; }
+        $documentRole = (string)($signer['document_role'] ?? $signerItem['role']);
+        $tasks[] = [
+          'reviu_id' => (int)($row['reviu_id'] ?? 0),
+          'kode' => (string)($row['kode'] ?? ''),
+          'jenis_nama' => (string)($row['jenis_nama'] ?? chr_template_display_name((string)($row['template_code'] ?? ''))),
+          'document_role' => $documentRole,
+          'document_role_label' => (string)($signer['document_role_label'] ?? 'Penanda Tangan'),
+          'jabatan' => (string)($signer['jabatan'] ?? ''),
+          'approval_anchor' => chr_sop_signature_anchor($documentRole, (int)$signerItem['index']),
+          'updated_at' => (string)($row['updated_at'] ?? ''),
+          'submitted_at' => (string)($workflow['submitted_at'] ?? ''),
+          'status' => $status,
+        ];
+      }
+    }
+    return $tasks;
+  }
+}
+
+if (!function_exists('chr_dynamic_normalize_input')) {
+  function chr_dynamic_normalize_input(array $template, array $input, array $storedData = [], ?array $rev = null, ?mysqli $conn = null, array &$errors = [], int $currentUserId = 0, array $requestMeta = [], bool $locked = false): array {
+    $defaults = chr_dynamic_defaults($template, $rev);
+    $storedDynamic = isset($storedData['dynamic']) && is_array($storedData['dynamic']) ? $storedData['dynamic'] : [];
+    $dynamic = $storedDynamic;
+
+    foreach (($template['sections'] ?? []) as $section) {
+      if (!is_array($section)) { continue; }
+      $sectionKey = (string)($section['key'] ?? '');
+      if ($sectionKey === '') { continue; }
+      $dynamic[$sectionKey] = isset($dynamic[$sectionKey]) && is_array($dynamic[$sectionKey])
+        ? $dynamic[$sectionKey]
+        : ($defaults['dynamic'][$sectionKey] ?? []);
+      $sectionInput = isset($input[$sectionKey]) && is_array($input[$sectionKey]) ? $input[$sectionKey] : [];
+      foreach (($section['fields'] ?? []) as $field) {
+        if (!is_array($field)) { continue; }
+        $fieldKey = (string)($field['key'] ?? '');
+        if ($fieldKey === '') { continue; }
+        if (array_key_exists($fieldKey, $sectionInput)) {
+          $dynamic[$sectionKey][$fieldKey] = chr_dynamic_normalize_field($field, $sectionInput[$fieldKey]);
+        } elseif (!array_key_exists($fieldKey, $dynamic[$sectionKey])) {
+          $dynamic[$sectionKey][$fieldKey] = $defaults['dynamic'][$sectionKey][$fieldKey] ?? chr_dynamic_field_default($field, $rev);
+        }
+      }
+    }
+
+    $templateCode = (string)($template['code'] ?? '');
+    if (chr_template_uses_standard_approval($templateCode) && $conn instanceof mysqli) {
+      $storedDynamicForSop = isset($storedData['dynamic']) && is_array($storedData['dynamic']) ? $storedData['dynamic'] : [];
+      $dynamic = chr_sop_apply_employee_profiles($conn, $dynamic, $storedDynamicForSop, $errors, $currentUserId, $requestMeta, $locked);
+    }
+
+    $payload = ['dynamic' => $dynamic];
+    if (chr_template_uses_standard_approval($templateCode)) {
+      $payload['workflow'] = chr_sop_workflow($storedData);
+      $payload = chr_sop_recalculate_workflow($payload);
+    }
+    return $payload;
   }
 }
 
@@ -591,6 +1624,12 @@ if (!function_exists('chr_form_fetch')) {
     }
 
     $data = chr_form_defaults($rev, $templateCode);
+    if (($template['renderer'] ?? '') === 'dynamic') {
+      $data = chr_form_merge($data, chr_dynamic_defaults($template ?: [], $rev));
+      if (chr_template_uses_standard_approval((string)($template['code'] ?? '')) && !isset($data['workflow'])) {
+        $data['workflow'] = chr_sop_workflow_default();
+      }
+    }
     if ($storedRow) {
       $json = json_decode((string)($storedRow['data_json'] ?? ''), true);
       if (is_array($json)) {
@@ -629,6 +1668,13 @@ if (!function_exists('chr_form_save')) {
     }
     $templateCode = chr_template_resolve_for_form($rev, $storedRow);
     $defaults = chr_form_defaults($rev, $templateCode);
+    $template = chr_template_get($templateCode);
+    if (($template['renderer'] ?? '') === 'dynamic') {
+      $defaults = chr_form_merge($defaults, chr_dynamic_defaults($template, $rev));
+      if (chr_template_uses_standard_approval((string)($template['code'] ?? '')) && !isset($defaults['workflow'])) {
+        $defaults['workflow'] = chr_sop_workflow_default();
+      }
+    }
     $storedData = [];
     if ($storedRow) {
       $decoded = json_decode((string)($storedRow['data_json'] ?? ''), true);

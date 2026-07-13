@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/security_headers.php';
+require_once __DIR__ . '/includes/url_helpers.php';
 require_once __DIR__ . '/includes/session_hardening.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/csrf.php';
@@ -19,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'logo
     if ($token !== '' && $current !== '' && !hash_equals($current, $token)) {
         // Ignore mismatch to avoid trapping users on logout.
     }
-    $loginUrl = function_exists('auth_login_url') ? auth_login_url() : '/login.php';
+    $loginUrl = function_exists('auth_login_url') ? auth_login_url() : (function_exists('route_url') ? route_url('login') : '/login.php');
     $sep = (strpos($loginUrl, '?') === false) ? '?' : '&';
     force_logout_and_redirect($loginUrl . $sep . 'logged_out=1');
 }

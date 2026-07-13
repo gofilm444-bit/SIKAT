@@ -13,6 +13,7 @@ tmp/
 cache/
 logs/
 vendor/
+.codex/backups/
 *.sql
 !deploy/
 !deploy/migrations/
@@ -23,3 +24,17 @@ vendor/
 *.zip
 *.bak
 *.bak*
+CHR_*_DRAFT_*.docx
+CHR_*_FINAL_*.docx
+CHR_*_DRAFT_*.pdf
+CHR_*_FINAL_*.pdf
+*_preview*.docx
+*_preview*.pdf
+*_export*.docx
+*_export*.pdf
+*_uji*.docx
+*_uji*.pdf
+*_test*.docx
+*_test*.pdf
+screenshots/
+screenshot*/

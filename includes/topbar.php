@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/url_helpers.php';
+
 if (!function_exists('topbar_initials')) {
     function topbar_initials(string $name): string {
         $name = trim(preg_replace('/\s+/', ' ', $name));
@@ -118,12 +120,50 @@ if ($uid > 0 && ($akses_dashboard + $akses_pelaporan + $akses_review) === 0) {
 
 // tampilkan divider dinamis kalau ada menu akses tambahan
 $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_review === 1);
+$pageTitleMap = [
+    'dashboard.php' => 'Dashboard',
+    'review.php' => 'Review Internal',
+    'pelaporan.php' => 'Pelaporan',
+    'pelaporan_detail.php' => 'Detail Pelaporan',
+    'pengguna.php' => 'Manajemen Pengguna',
+    'kebijakan.php' => 'Kebijakan',
+    'risiko.php' => 'Manajemen Risiko',
+    'self_assessment.php' => 'Self-Assessment',
+    'settings.php' => 'Pengaturan',
+    'public_media.php' => 'Kelola Media Publik',
+    'public_contacts.php' => 'Kelola Kontak Publik',
+    'mail_recipients.php' => 'Penerima Email',
+];
+$topbarScript = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+$topbarTitle = $pageTitleMap[$topbarScript] ?? 'SIKAT';
+$layoutCssPath = dirname(__DIR__) . '/assets/css/ui_base.css';
+$layoutCssVersion = is_file($layoutCssPath) ? (string)filemtime($layoutCssPath) : '1';
 ?>
-<header class="topbar">
+<link rel="stylesheet" href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css') . '?v=' . $layoutCssVersion, ENT_QUOTES, 'UTF-8') ?>" data-sikat-layout-css>
+<style>
+body.app-sidebar-enabled{--app-sidebar-width:258px;--app-sidebar-collapsed-width:78px;padding-left:var(--app-sidebar-width);}
+.app-sidebar{position:fixed;inset:0 auto 0 0;width:var(--app-sidebar-width,258px);height:100vh;z-index:100;display:flex;flex-direction:column;background:#0b4f31;color:#eaf7ef;overflow:hidden;}
+.sidebar-logo{width:78px;height:58px;object-fit:contain}.sidebar-icon svg{width:17px;height:17px}.sidebar-close{display:none}
+.app-sidebar a{color:inherit;text-decoration:none;}
+.app-sidebar .sidebar-nav{flex:1 1 auto;overflow-y:auto;}
+.app-sidebar-enabled .topbar{position:sticky;top:0;z-index:90;}
+@media(max-width:991.98px){body.app-sidebar-enabled{padding-left:0}.app-sidebar{transform:translateX(-104%)}body.sidebar-open .app-sidebar{transform:translateX(0)}.sidebar-close{display:inline-flex}}
+</style>
+<script>
+document.body.classList.add('app-sidebar-enabled');
+</script>
+<?php include __DIR__ . '/sidebar.php'; ?>
+<header class="topbar app-header">
   <div class="topbar-brand">
-    <img class="topbar-logo" src="/ski_new/asset/logo_poltekkes_baru-60h.png" alt="Poltekkes Ternate">
-    <span class="sikat-version-badge">SIKAT v3.0</span>
-    <span class="sr-only">Poltekkes Ternate</span>
+    <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Buka atau tutup sidebar" aria-controls="appSidebar" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </button>
+    <div class="topbar-title">
+      <span class="topbar-name"><?= htmlspecialchars($topbarTitle, ENT_QUOTES, 'UTF-8') ?></span>
+      <span class="topbar-sub">SIKAT Poltekkes Kemenkes Ternate</span>
+    </div>
   </div>
   <div class="topbar-actions">
     <div class="topbar-profile" id="topbarMenuWrap">
@@ -137,32 +177,10 @@ $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_
         </div>
         <div class="topbar-divider"></div>
 
-        <?php if ($akses_dashboard === 1): ?>
-          <a href="dashboard.php" role="menuitem">Dashboard</a>
-        <?php endif; ?>
-
-        <?php if ($akses_review === 1): ?>
-          <a href="review.php" role="menuitem">Review</a>
-        <?php endif; ?>
-
-        <?php if ($akses_pelaporan === 1): ?>
-          <a href="pelaporan.php" role="menuitem">Pelaporan</a>
-        <?php endif; ?>
-
-        <?php if ($hasQuickMenu): ?>
-          <div class="topbar-divider" style="height:1px;background:#e6efe9;margin:6px 4px;"></div>
-        <?php endif; ?>
-
-        <a href="settings.php" role="menuitem">Pengaturan</a>
-        <a href="settings.php#ubah-password" role="menuitem">Ubah Password</a>
-        <?php if ($showAdminItems): ?>
-          <a href="public_media.php" role="menuitem">Kelola Media Publik</a>
-          <a href="public_contacts.php" role="menuitem">Kelola Kontak Publik</a>
-          <a href="pengguna.php" role="menuitem">Pengguna</a>
-          <a href="mail_recipients.php" role="menuitem">Penerima Email</a>
-        <?php endif; ?>
+        <a href="<?= htmlspecialchars(route_url('settings'), ENT_QUOTES, 'UTF-8') ?>" role="menuitem">Pengaturan</a>
+        <a href="<?= htmlspecialchars(route_url('settings', [], 'ubah-password'), ENT_QUOTES, 'UTF-8') ?>" role="menuitem">Ubah Password</a>
         <div class="topbar-divider"></div>
-        <a href="logout.php" class="danger" role="menuitem">Logout</a>
+        <a href="<?= htmlspecialchars(route_url('logout'), ENT_QUOTES, 'UTF-8') ?>" class="danger" role="menuitem">Logout</a>
       </div>
     </div>
   </div>
@@ -197,6 +215,84 @@ $hasQuickMenu = ($akses_dashboard === 1) || ($akses_pelaporan === 1) || ($akses_
   });
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeMenu();
+  });
+})();
+
+(function() {
+  var body = document.body;
+  var sidebar = document.getElementById('appSidebar');
+  var toggle = document.getElementById('sidebarToggle');
+  var backdrop = document.getElementById('sidebarBackdrop');
+  var closeBtn = document.getElementById('sidebarClose');
+  if (!sidebar || !toggle) return;
+  var storageKey = 'sikat.sidebar.collapsed';
+  var notifyResize = function() {
+    window.setTimeout(function() {
+      window.dispatchEvent(new Event('resize'));
+    }, 240);
+  };
+
+  var applyExpanded = function(open) {
+    body.classList.toggle('sidebar-open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (backdrop) { backdrop.hidden = !open; }
+    body.style.overflow = open && window.matchMedia('(max-width: 991px)').matches ? 'hidden' : '';
+    notifyResize();
+  };
+  var applyCollapsed = function(collapsed) {
+    body.classList.toggle('sidebar-collapsed', collapsed);
+    toggle.setAttribute('title', collapsed ? 'Buka Sidebar' : 'Ciutkan Sidebar');
+    toggle.setAttribute('aria-label', collapsed ? 'Buka Sidebar' : 'Ciutkan Sidebar');
+    notifyResize();
+  };
+  try {
+    applyCollapsed(localStorage.getItem(storageKey) === '1');
+  } catch (e) {}
+
+  sidebar.querySelectorAll('[data-sidebar-accordion]').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      var item = btn.closest('.sidebar-item');
+      var target = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!item || !target) return;
+      var open = btn.getAttribute('aria-expanded') !== 'true';
+      item.classList.toggle('open', open);
+      target.classList.toggle('open', open);
+      target.hidden = !open;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+
+  sidebar.querySelectorAll('a.sidebar-link, a.sidebar-sublink').forEach(function(link) {
+    link.addEventListener('click', function() {
+      if (window.matchMedia('(max-width: 991px)').matches) {
+        applyExpanded(false);
+      }
+    });
+  });
+
+  toggle.addEventListener('click', function() {
+    if (window.matchMedia('(max-width: 991px)').matches) {
+      applyExpanded(!body.classList.contains('sidebar-open'));
+      return;
+    }
+    var collapsed = !body.classList.contains('sidebar-collapsed');
+    applyCollapsed(collapsed);
+    try { localStorage.setItem(storageKey, collapsed ? '1' : '0'); } catch (e) {}
+  });
+  if (backdrop) {
+    backdrop.addEventListener('click', function() { applyExpanded(false); });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', function() { applyExpanded(false); });
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { applyExpanded(false); }
+  });
+  window.addEventListener('resize', function() {
+    if (!window.matchMedia('(max-width: 991px)').matches) {
+      applyExpanded(false);
+    }
   });
 })();
 

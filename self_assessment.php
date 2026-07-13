@@ -6,7 +6,7 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/audit_log.php';
 require_once 'db/koneksi.php';
 
-if(!isset($_SESSION['user'])) header('Location: login.php');
+if(!isset($_SESSION['user'])) header('Location: ' . route_url('login'));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { csrf_validate($_POST['csrf'] ?? ''); }
 
@@ -105,7 +105,7 @@ if(isset($_POST['tambah_self'])) {
             'tanggal' => $tanggal,
         ]);
     }
-    header('Location: self_assessment.php'); exit;
+    header('Location: ' . route_url('self-assessment')); exit;
 }
 
 
@@ -137,7 +137,7 @@ if(isset($_POST['edit_self'])) {
             'tanggal' => $tanggal,
         ]);
     }
-    header('Location: self_assessment.php'); exit;
+    header('Location: ' . route_url('self-assessment')); exit;
 }
 
 
@@ -159,7 +159,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_self'])) {
     if ($ok) {
         audit_log($conn, 'delete', 'self_assessment', $id);
     }
-    header('Location: self_assessment.php'); exit;
+    header('Location: ' . route_url('self-assessment')); exit;
 }
 
 
@@ -243,7 +243,7 @@ if(isset($_GET['export_excel'])) {
 
     <link rel="stylesheet" href="style.css">
 
-    <link rel="stylesheet" href="assets/css/ui_base.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>">
 
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 

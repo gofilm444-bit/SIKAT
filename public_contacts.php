@@ -10,7 +10,7 @@ if (in_array($env, ['local','dev','development'], true)) {
     ini_set('display_errors', 0);
 }
 
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 
 $role = strtolower((string)($_SESSION['user']['peran'] ?? ''));
 $roleRaw = strtolower((string)($_SESSION['user']['peran_raw'] ?? $role));
@@ -91,12 +91,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'save_contact' && !$tableReady) {
         contact_flash('danger', 'Tabel public_contacts belum tersedia. Jalankan migration terlebih dahulu.');
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
 
     if (in_array($action, ['add_social', 'update_social', 'delete_social'], true) && !$socialTableReady) {
         contact_flash('danger', 'Tabel public_social_links belum tersedia. Jalankan migration terlebih dahulu.');
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
 
     if ($action === 'add_social' || $action === 'update_social') {
@@ -108,11 +108,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!isset($platformOptions[$platform])) {
             contact_flash('danger', 'Platform media sosial tidak valid.');
-            header('Location: public_contacts.php'); exit;
+            header('Location: ' . route_url('public_contacts')); exit;
         }
         if ($url === '' || !contact_valid_http_url($url)) {
             contact_flash('danger', 'URL media sosial wajib valid dan memakai http/https.');
-            header('Location: public_contacts.php'); exit;
+            header('Location: ' . route_url('public_contacts')); exit;
         }
 
         $label = $platformOptions[$platform]['label'];
@@ -132,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 contact_flash($ok ? 'success' : 'danger', $ok ? 'Link media sosial diperbarui.' : 'Gagal memperbarui link media sosial.');
             }
         }
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
 
     if ($action === 'delete_social') {
@@ -143,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             contact_flash('success', 'Link media sosial dihapus.');
         }
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
 
     $contactName = trim((string)($_POST['contact_name'] ?? ''));
@@ -158,15 +158,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($contactName === '' && $description === '') {
         contact_flash('danger', 'Isi minimal nama pengelola atau deskripsi kontak.');
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
     if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         contact_flash('danger', 'Format email tidak valid.');
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
     if ($mapsUrl !== '' && !contact_valid_http_url($mapsUrl)) {
         contact_flash('danger', 'Format link Google Maps tidak valid.');
-        header('Location: public_contacts.php'); exit;
+        header('Location: ' . route_url('public_contacts')); exit;
     }
 
     $existingId = 0;
@@ -193,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             contact_flash($ok ? 'success' : 'danger', $ok ? 'Kontak publik berhasil disimpan.' : 'Gagal menyimpan kontak publik.');
         }
     }
-    header('Location: public_contacts.php'); exit;
+    header('Location: ' . route_url('public_contacts')); exit;
 }
 
 $flash = $_SESSION['public_contact_flash'] ?? null;
@@ -218,7 +218,7 @@ if ($socialTableReady && ($rs = $conn->query("SELECT * FROM public_social_links 
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
   <style>
     body{background:#f4faf6;color:#0b3d2e;}
     .wrap{max-width:980px;margin:24px auto 48px;padding:0 14px;}
@@ -237,7 +237,7 @@ if ($socialTableReady && ($rs = $conn->query("SELECT * FROM public_social_links 
       <h1 class="h4 text-success mb-1">Kelola Kontak Publik</h1>
       <div class="text-muted">Atur informasi pengelola yang tampil di halaman publik SIKAT.</div>
     </div>
-    <a href="dashboard.php" class="btn btn-outline-success"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
+    <a href="<?= e(route_url('dashboard')) ?>" class="btn btn-outline-success"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
   </div>
 
   <?php if ($flash): ?>

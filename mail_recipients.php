@@ -125,7 +125,7 @@ $pages = max(1, (int)ceil($total/$per));
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
   <style>
     :root{ --brand:#218838; --accent:#f0c300; --soft:#fbfdf8; --border:#dcefe4; }
     body{ background:var(--soft); }

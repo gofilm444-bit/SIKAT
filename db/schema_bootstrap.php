@@ -98,6 +98,15 @@ if (db_table_exists($conn, 'pelaporan')) {
 if (db_table_exists($conn, 'pengguna') && !db_column_exists($conn, 'pengguna', 'password_hash')) {
     db_exec($conn, "ALTER TABLE pengguna ADD COLUMN password_hash VARCHAR(255) NULL AFTER password");
 }
+if (db_table_exists($conn, 'pengguna') && !db_column_exists($conn, 'pengguna', 'nip')) {
+    db_exec($conn, "ALTER TABLE pengguna ADD COLUMN nip VARCHAR(30) NULL AFTER nama");
+}
+if (db_table_exists($conn, 'pengguna') && !db_column_exists($conn, 'pengguna', 'jabatan')) {
+    db_exec($conn, "ALTER TABLE pengguna ADD COLUMN jabatan VARCHAR(200) NULL AFTER nip");
+}
+if (db_table_exists($conn, 'pengguna') && !db_column_exists($conn, 'pengguna', 'unit_id')) {
+    db_exec($conn, "ALTER TABLE pengguna ADD COLUMN unit_id INT NULL AFTER jabatan");
+}
 if (db_table_exists($conn, 'pengguna') && !db_column_exists($conn, 'pengguna', 'akses_dashboard')) {
     db_exec($conn, "ALTER TABLE pengguna ADD COLUMN akses_dashboard TINYINT(1) NOT NULL DEFAULT 0 AFTER status");
 }
@@ -279,6 +288,43 @@ if (!db_table_exists($conn, 'jenis_reviu')) {
         aktif TINYINT(1) NOT NULL DEFAULT 1,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+if (db_table_exists($conn, 'jenis_reviu')) {
+    db_exec($conn, "UPDATE jenis_reviu
+        SET nama='Reviu RKA/RKAKL',
+            deskripsi=COALESCE(NULLIF(deskripsi,''), 'Reviu atas RKA-K/L dan RKAKL berdasarkan format catatan hasil reviu RKA')
+        WHERE LOWER(TRIM(nama)) IN ('reviu anggaran', 'reviu rka', 'reviu rkakl', 'rka', 'rkakl', 'rka/rkakl', 'rka-k/l', 'reviu rka-k/l')");
+    db_exec($conn, "INSERT INTO jenis_reviu (nama, deskripsi, aktif)
+        SELECT 'Reviu RKA/RKAKL', 'Reviu atas RKA-K/L dan RKAKL berdasarkan format catatan hasil reviu RKA', 1
+        WHERE NOT EXISTS (
+            SELECT 1 FROM jenis_reviu
+            WHERE LOWER(TRIM(nama)) IN ('reviu rka/rkakl', 'reviu rka-k/l', 'reviu rkakl', 'reviu rka')
+        )");
+    db_exec($conn, "UPDATE jenis_reviu
+        SET nama='Reviu Manajemen Risiko',
+            deskripsi=COALESCE(NULLIF(deskripsi,''), 'Reviu terhadap penerapan dan pemantauan manajemen risiko unit kerja')
+        WHERE LOWER(TRIM(nama)) IN ('reviu manajemen resiko', 'reviu manajemen risiko', 'manajemen resiko', 'manajemen risiko', 'manrisk', 'reviu manrisk')");
+    db_exec($conn, "INSERT INTO jenis_reviu (nama, deskripsi, aktif)
+        SELECT 'Reviu Manajemen Risiko', 'Reviu terhadap penerapan dan pemantauan manajemen risiko unit kerja', 1
+        WHERE NOT EXISTS (
+            SELECT 1 FROM jenis_reviu
+            WHERE LOWER(TRIM(nama)) IN ('reviu manajemen risiko', 'reviu manajemen resiko', 'reviu manrisk', 'manrisk')
+        )");
+    foreach ([
+        ['Reviu Pengembangan Pegawai', 'Reviu atas proses dan dokumen pengembangan pegawai', "'reviu pengembangan pegawai','pengembangan pegawai','reviu pengembangan sdm','pengembangan sdm'"],
+        ['Reviu LHKPN dan LHKASN', 'Reviu kepatuhan pelaporan LHKPN dan LHKASN', "'reviu lhkpn dan lhkasn','reviu lhkpn & lhkasn','reviu lhkpn/lhkasn','lhkpn','lhkasn'"],
+        ['Reviu IKU-IKT', 'Reviu indikator kinerja utama dan indikator kinerja tambahan', "'reviu iku-ikt','reviu iku/ikt','iku-ikt','iku/ikt','iku','ikt'"],
+        ['Reviu Laporan Kinerja', 'Reviu laporan kinerja/LKJ satuan kerja atau unit kerja', "'reviu laporan kinerja','reviu lkj','reviu lakip','laporan kinerja','lkj','lakip'"],
+        ['Reviu PIPK', 'Reviu pengendalian intern atas pelaporan keuangan tingkat satker', "'reviu pipk','pipk'"],
+        ['Reviu RKBMN', 'Reviu rencana kebutuhan barang milik negara', "'reviu rkbmn','rkbmn'"],
+    ] as $jenisSeed) {
+        $nama = $conn->real_escape_string($jenisSeed[0]);
+        $deskripsi = $conn->real_escape_string($jenisSeed[1]);
+        db_exec($conn, "INSERT INTO jenis_reviu (nama, deskripsi, aktif)
+            SELECT '{$nama}', '{$deskripsi}', 1
+            WHERE NOT EXISTS (SELECT 1 FROM jenis_reviu WHERE LOWER(TRIM(nama)) IN ({$jenisSeed[2]}))");
+    }
 }
 
 // ====== reviu (jadwal) ======

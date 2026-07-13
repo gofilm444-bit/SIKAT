@@ -42,10 +42,11 @@ $conn->set_charset('utf8mb4');
 date_default_timezone_set('Asia/Jayapura'); // WIT
 require_once __DIR__.'/pelaporan_helpers.php';
 require_once __DIR__.'/chr_helpers.php';
+require_once __DIR__.'/chr_form_renderer.php';
 require_once __DIR__.'/early_warning_helpers.php';
 
 /* ====== AUTHZ ====== */
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 
 if (!function_exists('role_slug')) {
   function role_slug(string $value): string {
@@ -605,8 +606,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && csrf_ok($_
     header('Location: '.$_SERVER['PHP_SELF'].'?tab=asg&rid='.$rid); exit;
   }
 
-  /* ---- CHR FORM: SIMPAN TEMPLATE WORD ---- */
-  if ($act==='chr_sheet_save' && (in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role) || is_director_like($role))) {
+  /* ---- CHR FORM: SIMPAN / WORKFLOW CHR SOP ---- */
+  if (in_array($act, ['chr_sheet_save', 'chr_sop_submit', 'chr_sop_return', 'chr_sop_reopen'], true) && (in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role) || is_director_like($role))) {
     $rid = (int)($_POST['reviu_id'] ?? 0);
     $redirectUrl = $_SERVER['PHP_SELF'].'?tab=chr';
     if ($rid > 0) { $redirectUrl .= '&rid='.$rid; }
@@ -627,12 +628,96 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && csrf_ok($_
       $stmt->close();
     }
 
-    $base = chr_form_defaults($revRow);
-    $rawInput = $_POST['chr_sheet'] ?? [];
-    if (!is_array($rawInput)) { $rawInput = []; }
-    $payload = chr_form_normalize_input($rawInput, $base);
-    $saved = chr_form_save($conn, $rid, $payload);
-    flash($saved ? 'ok' : 'err', $saved ? 'Template CHR tersimpan.' : 'Gagal menyimpan template CHR.');
+    $currentSheet = chr_form_fetch($conn, $rid, $revRow);
+    $templateCode = (string)($currentSheet['template_code'] ?? 'chr_legacy_laporan_keuangan');
+    $template = chr_template_get($templateCode) ?: chr_template_get('chr_legacy_laporan_keuangan');
+    $approvalDocName = function_exists('chr_template_display_name') ? chr_template_display_name($templateCode) : ($templateCode === 'chr_rkakl' ? 'CHR RKAKL' : ($templateCode === 'chr_manajemen_risiko' ? 'CHR Manajemen Risiko' : 'CHR SOP'));
+    $useDynamicSave = function_exists('chr_template_uses_standard_approval')
+      && chr_template_uses_standard_approval($templateCode)
+      && (($template['renderer'] ?? 'legacy') === 'dynamic');
+    if ($useDynamicSave) {
+      $storedRow = chr_form_fetch_stored_row($conn, $rid);
+      $storedData = [];
+      if ($storedRow) {
+        $decoded = json_decode((string)($storedRow['data_json'] ?? ''), true);
+        if (is_array($decoded)) { $storedData = $decoded; }
+      }
+      $workflow = chr_sop_workflow($storedData);
+      $workflowStatus = (string)($workflow['status'] ?? 'draft');
+      $currentUserId = (int)($_SESSION['user']['id'] ?? 0);
+
+      if ($act === 'chr_sop_return') {
+        $note = trim((string)($_POST['return_note'] ?? ''));
+        if ($note === '') {
+          flash('err','Catatan pengembalian wajib diisi.');
+          header('Location: '.$redirectUrl); exit;
+        }
+        if (!chr_sop_user_has_waiting_signature($storedData, $currentUserId)) {
+          flash('err','Anda tidak memiliki hak untuk mengembalikan bagian ini.');
+          header('Location: '.$redirectUrl); exit;
+        }
+        $payload = chr_sop_return_for_revision($storedData, $currentUserId, $note);
+        $saved = chr_form_save($conn, $rid, $payload, $revRow);
+        flash($saved ? 'ok' : 'err', $saved ? $approvalDocName.' dikembalikan untuk perbaikan.' : 'Gagal mengembalikan '.$approvalDocName.'.');
+        header('Location: '.$redirectUrl); exit;
+      }
+
+      if ($act === 'chr_sop_reopen') {
+        if ($workflowStatus !== 'returned') {
+          flash('err',$approvalDocName.' hanya dapat dibuka untuk perbaikan setelah dikembalikan.');
+          header('Location: '.$redirectUrl); exit;
+        }
+        $payload = chr_sop_reopen_draft($storedData, $currentUserId);
+        $saved = chr_form_save($conn, $rid, $payload, $revRow);
+        flash($saved ? 'ok' : 'err', $saved ? $approvalDocName.' dibuka kembali sebagai draft. Tanda tangan lama telah direset.' : 'Gagal membuka '.$approvalDocName.' untuk perbaikan.');
+        header('Location: '.$redirectUrl); exit;
+      }
+
+      $rawInput = $_POST['chr_dynamic'] ?? [];
+      if (!is_array($rawInput)) { $rawInput = []; }
+      $lockedWorkflow = !in_array($workflowStatus, ['draft'], true);
+      if ($lockedWorkflow) {
+        if (!in_array($workflowStatus, ['waiting_signatures', 'partially_signed'], true)) {
+          flash('err',$approvalDocName.' tidak dapat diubah pada status saat ini.');
+          header('Location: '.$redirectUrl); exit;
+        }
+        $rawInput = ['pengesahan' => is_array($rawInput['pengesahan'] ?? null) ? $rawInput['pengesahan'] : []];
+      }
+      $chrSignerErrors = [];
+      $requestMeta = [
+        'ip' => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+      ];
+      $payload = chr_dynamic_normalize_input($template ?: [], $rawInput, $storedData, $revRow, $conn, $chrSignerErrors, $currentUserId, $requestMeta, $lockedWorkflow);
+      if ($chrSignerErrors) {
+        flash('err', implode(' ', array_values(array_unique($chrSignerErrors))));
+        header('Location: '.$redirectUrl); exit;
+      }
+      if ($act === 'chr_sop_submit') {
+        if ($workflowStatus !== 'draft') {
+          flash('err','Hanya draft '.$approvalDocName.' yang dapat diajukan untuk pengesahan.');
+          header('Location: '.$redirectUrl); exit;
+        }
+        $submitErrors = [];
+        $payload = chr_sop_submit_for_signatures($payload, $currentUserId, $submitErrors);
+        if ($submitErrors) {
+          flash('err', implode(' ', array_values(array_unique($submitErrors))));
+          header('Location: '.$redirectUrl); exit;
+        }
+      }
+    } else {
+      if ($act !== 'chr_sheet_save') {
+        flash('err','Aksi workflow hanya tersedia untuk template CHR dengan pengesahan standar.');
+        header('Location: '.$redirectUrl); exit;
+      }
+      $base = chr_form_defaults($revRow);
+      $rawInput = $_POST['chr_sheet'] ?? [];
+      if (!is_array($rawInput)) { $rawInput = []; }
+      $payload = chr_form_normalize_input($rawInput, $base);
+    }
+    $saved = chr_form_save($conn, $rid, $payload, $revRow);
+    $successMessage = $act === 'chr_sop_submit' ? $approvalDocName.' diajukan untuk pengesahan.' : 'Template CHR tersimpan.';
+    flash($saved ? 'ok' : 'err', $saved ? $successMessage : 'Gagal menyimpan template CHR.');
     header('Location: '.$redirectUrl); exit;
   }
 
@@ -1261,11 +1346,33 @@ $docs = ['Standar'=>[], 'KertasKerja'=>[], 'Pelaksanaan'=>[], 'Laporan'=>[], 'Du
 $hasDocs = false;
 $assign = []; $users=[];
 $chrSheet = chr_form_defaults(null);
+$chrTemplateCode = 'chr_legacy_laporan_keuangan';
+$chrTemplate = chr_template_get($chrTemplateCode) ?: [];
+$useDynamicChr = false;
+$chrDocName = 'CHR';
+$chrEmployeeOptions = [];
+$chrWorkflow = chr_sop_workflow_default();
+$chrWorkflowStatus = 'draft';
+$chrWorkflowLocked = false;
+$chrCanReturnCurrent = false;
 $chrSheetUpdatedAt = null;
 if($rid){
   $stmt=$conn->prepare("SELECT r.*, u.nama unit_nama, j.nama jenis_nama FROM reviu r JOIN unit_kerja u ON u.id=r.unit_id JOIN jenis_reviu j ON j.id=r.jenis_id WHERE r.id=?");
   $stmt->bind_param("i",$rid); $stmt->execute(); $rev=$stmt->get_result()->fetch_assoc();
   $chrSheet = chr_form_fetch($conn, $rid, $rev ?: null);
+  $chrTemplateCode = (string)($chrSheet['template_code'] ?? 'chr_legacy_laporan_keuangan');
+  $chrTemplate = chr_template_get($chrTemplateCode) ?: chr_template_get('chr_legacy_laporan_keuangan') ?: [];
+  $chrDocName = function_exists('chr_template_display_name') ? chr_template_display_name($chrTemplateCode) : ($chrTemplateCode === 'chr_rkakl' ? 'CHR RKAKL' : ($chrTemplateCode === 'chr_manajemen_risiko' ? 'CHR Manajemen Risiko' : ($chrTemplateCode === 'chr_sop' ? 'CHR SOP' : 'CHR')));
+  $useDynamicChr = function_exists('chr_template_uses_standard_approval')
+    && chr_template_uses_standard_approval($chrTemplateCode)
+    && (($chrTemplate['renderer'] ?? 'legacy') === 'dynamic');
+  if ($useDynamicChr) {
+    $chrEmployeeOptions = chr_employee_picker_options($conn);
+    $chrWorkflow = chr_sop_workflow($chrSheet);
+    $chrWorkflowStatus = (string)($chrWorkflow['status'] ?? 'draft');
+    $chrWorkflowLocked = $chrWorkflowStatus !== 'draft';
+    $chrCanReturnCurrent = chr_sop_user_has_waiting_signature($chrSheet, (int)($_SESSION['user']['id'] ?? 0));
+  }
   if ($metaStmt = $conn->prepare("SELECT updated_at FROM reviu_chr_form WHERE reviu_id=? LIMIT 1")) {
     $metaStmt->bind_param("i", $rid);
     if ($metaStmt->execute()) {
@@ -1364,6 +1471,8 @@ if($rid){
     }
   }
 }
+
+$chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSION['user']['id'] ?? 0));
 ?>
 <!doctype html>
 <html lang="id">
@@ -1373,7 +1482,7 @@ if($rid){
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= e(asset_url('assets/css/ui_base.css')) ?>" rel="stylesheet">
   <style>
     :root{ --brand:#218838; --accent:#f0c300; --soft:#fbfdf8; --border:#dcefe4; }
     body{ background:var(--soft); }
@@ -1382,10 +1491,10 @@ if($rid){
     .badge-ew{border:1px solid #ccc}
     .signature-pad-wrapper{
       position:relative;
-      border:2px dashed rgba(51,107,80,.4);
-      border-radius:14px;
-      background:#fff;
-      min-height:140px;
+      border:1.5px dashed rgba(51,107,80,.35);
+      border-radius:12px;
+      background:linear-gradient(180deg,#fff,#fbfdf8);
+      min-height:118px;
       touch-action:none;
       overflow:hidden;
       max-width:520px;
@@ -1395,7 +1504,7 @@ if($rid){
     }
     .signature-pad-wrapper canvas{
       width:100%;
-      height:140px;
+      height:118px;
       display:block;
       cursor:crosshair;
       touch-action:none;
@@ -1406,7 +1515,8 @@ if($rid){
       display:flex;
       align-items:center;
       justify-content:center;
-      font-size:.9rem;
+      font-size:.78rem;
+      padding:0 18px;
       pointer-events:none;
       transition:opacity .2s ease;
     }
@@ -1415,18 +1525,186 @@ if($rid){
       opacity:.4;
     }
     .chr-signature-pad{
-      min-height:130px;
+      min-height:118px;
       max-width:100%;
+    }
+    .chr-signature-preview{
+      border-top:1px solid rgba(51,107,80,.12);
+      padding-top:10px;
     }
     .chr-signature-preview img{
       max-width:100%;
-      max-height:120px;
-      border:1px solid rgba(0,0,0,.12);
-      border-radius:10px;
+      width:100%;
+      height:82px;
+      object-fit:contain;
+      border:1px solid rgba(51,107,80,.16);
+      border-radius:8px;
       background:#fff;
       padding:4px;
     }
-    .chr-signature-actions .btn{min-width:90px;}
+    .chr-signature-actions .btn{min-width:0; flex:1 1 0; font-weight:600;}
+    .chr-signature-section .card-body{background:#fff;}
+    .chr-signature-grid>[class*="col-"]{display:flex;}
+    .chr-signature-panel{
+      width:100%;
+      border:1px solid rgba(51,107,80,.16);
+      border-radius:14px;
+      background:#fbfdf8;
+      padding:16px;
+      box-shadow:0 4px 14px rgba(33,136,56,.06);
+    }
+    .chr-signature-panel-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:12px;
+      padding-bottom:10px;
+      border-bottom:1px solid rgba(51,107,80,.14);
+    }
+    .chr-signature-panel-title{
+      font-weight:700;
+      color:#1f6b3a;
+      line-height:1.25;
+    }
+    .chr-signature-fields{
+      display:grid;
+      gap:10px;
+    }
+    .chr-employee-picker .form-control{
+      border-color:rgba(51,107,80,.18);
+    }
+    .chr-employee-search{
+      border:1px solid rgba(51,107,80,.16);
+      border-radius:12px;
+      background:#fff;
+      padding:8px;
+    }
+    .chr-employee-help,
+    .chr-employee-empty{
+      margin-top:8px;
+      border:1px dashed rgba(51,107,80,.18);
+      border-radius:10px;
+      background:#f8fbf9;
+      padding:8px 10px;
+    }
+    .chr-employee-results{
+      display:grid;
+      gap:6px;
+      max-height:210px;
+      overflow:auto;
+      margin-top:8px;
+      padding-right:2px;
+    }
+    .chr-employee-option{
+      width:100%;
+      border:1px solid rgba(51,107,80,.12);
+      border-radius:10px;
+      background:#fff;
+      color:#1f5130;
+      display:grid;
+      gap:2px;
+      padding:8px 10px;
+      text-align:left;
+      transition:background .15s ease, border-color .15s ease, box-shadow .15s ease;
+    }
+    .chr-employee-option:hover,
+    .chr-employee-option.is-selected{
+      background:#eef8f0;
+      border-color:rgba(33,136,56,.32);
+      box-shadow:0 4px 12px rgba(33,136,56,.08);
+    }
+    .chr-employee-option.is-empty{
+      color:#6c757d;
+      font-size:.85rem;
+    }
+    .chr-employee-option.is-disabled{
+      opacity:.58;
+      cursor:not-allowed;
+    }
+    .chr-employee-option-name{
+      font-weight:700;
+      font-size:.9rem;
+    }
+    .chr-employee-option-meta,
+    .chr-employee-option-nip{
+      color:#6c757d;
+      font-size:.78rem;
+    }
+    .chr-signer-profile{
+      display:grid;
+      gap:3px;
+      border:1px solid rgba(51,107,80,.14);
+      border-radius:12px;
+      background:#fff;
+      padding:10px 12px;
+      min-height:88px;
+    }
+    .chr-signer-profile.is-empty{
+      color:#6c757d;
+      background:#f8fbf9;
+    }
+    .chr-signer-name{
+      font-weight:700;
+      color:#1f5130;
+    }
+    .chr-signer-title{
+      color:#2d6d43;
+      font-size:.9rem;
+    }
+    .chr-signer-meta,
+    .chr-signer-unit{
+      color:#6c757d;
+      font-size:.8rem;
+    }
+    .chr-signature-waiting{
+      border:1px dashed rgba(51,107,80,.25);
+      border-radius:10px;
+      background:#f8fbf9;
+      padding:12px;
+    }
+    .chr-member-signature-list{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+    }
+    .chr-member-signature-card{
+      border:1px solid rgba(51,107,80,.14);
+      border-radius:12px;
+      background:#fff;
+      padding:12px;
+    }
+    .chr-submit-readiness{
+      border:1px solid rgba(51,107,80,.14);
+      border-radius:12px;
+      background:#f8fbf9;
+      padding:10px 12px;
+    }
+    .chr-preview-modal .modal-dialog{
+      max-width:min(1120px, 96vw);
+    }
+    .chr-preview-frame{
+      width:100%;
+      height:78vh;
+      border:0;
+      background:#eef3ef;
+      border-radius:0 0 10px 10px;
+    }
+    .approval-anchor-highlight{
+      outline:3px solid rgba(25,135,84,.38);
+      box-shadow:0 0 0 6px rgba(25,135,84,.12), 0 10px 24px rgba(25,135,84,.12);
+      transition:box-shadow .25s ease, outline-color .25s ease;
+    }
+    @media (max-width: 575.98px){
+      .chr-signature-panel{padding:12px;}
+      .chr-signature-actions{flex-direction:column;}
+      .chr-signature-actions .btn{width:100%;}
+      .chr-member-signature-list{grid-template-columns:1fr;}
+      .chr-preview-frame{height:74vh;}
+    }
+    @media (max-width: 991.98px){
+      .chr-member-signature-list{grid-template-columns:1fr;}
+    }
   </style>
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 </head>
@@ -1436,11 +1714,11 @@ if($rid){
 
 <main class="container my-4">
   <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
-    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="if(window.history.length>1){window.history.back();}else{window.location.href='dashboard.php';}">
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="if(window.history.length>1){window.history.back();}else{window.location.href='<?= e(route_url('dashboard')) ?>';}">
       <i class="bi bi-arrow-left"></i> Kembali
     </button>
     <?php if (!is_auditee() || is_director_like($role)): ?>
-    <a class="btn btn-success btn-sm" href="dashboard.php">
+    <a class="btn btn-success btn-sm" href="<?= e(route_url('dashboard')) ?>">
       <i class="bi bi-speedometer2"></i> Dashboard
     </a>
     <?php endif; ?>
@@ -1454,17 +1732,57 @@ if($rid){
     include __DIR__ . '/includes/flash.php';
   ?>
 
+  <?php if(!empty($chrPendingSignatureTasks)): ?>
+    <div class="card-soft p-3 mb-3">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <div>
+          <div class="fw-semibold text-success">Dokumen Menunggu Tanda Tangan</div>
+          <div class="small text-muted">Daftar dokumen CHR yang menugaskan akun Anda sebagai penanda tangan.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Dokumen</th>
+              <th>Posisi Anda</th>
+              <th>Jabatan Resmi</th>
+              <th>Tanggal Pengajuan</th>
+              <th>Status</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach($chrPendingSignatureTasks as $task): ?>
+              <tr>
+                <td>
+                  <div class="fw-semibold"><?= e($task['kode'] ?: 'Reviu #'.(int)$task['reviu_id']) ?></div>
+                  <div class="small text-muted"><?= e($task['jenis_nama'] ?: 'CHR SOP') ?></div>
+                </td>
+                <td><?= e($task['document_role_label']) ?></td>
+                <td><?= e($task['jabatan']) ?></td>
+                <td><?= e($task['submitted_at'] ?: $task['updated_at']) ?></td>
+                <td><span class="badge bg-warning text-dark">Menunggu Tanda Tangan</span></td>
+                <td><a class="btn btn-sm btn-outline-success" href="<?= e(review_url('chr', ['rid' => (int)$task['reviu_id']], (string)($task['approval_anchor'] ?? 'approval-section'))) ?>">Lihat Dokumen</a></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  <?php endif; ?>
+
 
   <ul class="nav nav-tabs mb-3">
-    <li class="nav-item"><a class="nav-link <?= $tab==='jadwal'?'active':'' ?>" href="?tab=jadwal">Jadwal</a></li>
-    <li class="nav-item"><a class="nav-link <?= $tab==='asg'?'active':'' ?>" href="?tab=asg<?= $rid?'&rid='.$rid:'' ?>">Penugasan</a></li>
-    <li class="nav-item"><a class="nav-link <?= $tab==='dok'?'active':'' ?>" href="?tab=dok<?= $rid?'&rid='.$rid:'' ?>">Dokumen</a></li>
-    <li class="nav-item"><a class="nav-link <?= $tab==='chr'?'active':'' ?>" href="?tab=chr<?= $rid?'&rid='.$rid:'' ?>">CHR & Rekomendasi</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab==='jadwal'?'active':'' ?>" href="<?= e(review_url('jadwal')) ?>">Jadwal</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab==='asg'?'active':'' ?>" href="<?= e(review_url('asg', $rid ? ['rid' => $rid] : [])) ?>">Penugasan</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab==='dok'?'active':'' ?>" href="<?= e(review_url('dok', $rid ? ['rid' => $rid] : [])) ?>">Dokumen</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab==='chr'?'active':'' ?>" href="<?= e(review_url('chr', $rid ? ['rid' => $rid] : [])) ?>">CHR & Rekomendasi</a></li>
     <?php if(!is_auditee() || is_director_like($role)){ ?>
-      <li class="nav-item"><a class="nav-link <?= $tab==='laporan'?'active':'' ?>" href="?tab=laporan<?= $rid?'&rid='.$rid:'' ?>">Laporan &amp; Verifikasi</a></li>
+      <li class="nav-item"><a class="nav-link <?= $tab==='laporan'?'active':'' ?>" href="<?= e(review_url('laporan', $rid ? ['rid' => $rid] : [])) ?>">Laporan &amp; Verifikasi</a></li>
     <?php } ?>
     <?php if (!is_auditee()): ?>
-      <li class="nav-item ms-auto"><a class="nav-link <?= $tab==='master'?'active':'' ?>" href="?tab=master">Master</a></li>
+      <li class="nav-item ms-auto"><a class="nav-link <?= $tab==='master'?'active':'' ?>" href="<?= e(review_url('master')) ?>">Master</a></li>
     <?php endif; ?>
   </ul>
 
@@ -1512,7 +1830,7 @@ if($rid){
         <input type="hidden" name="dir" value="<?= e($sortDir) ?>">
         <div class="col-md-4"><input class="form-control" name="q" value="<?= e($q) ?>" placeholder="Cari kode/unit (mis. warna:merah, status:Monitoring TL)"></div>
         <div class="col-md-2"><button class="btn btn-primary w-100">Filter</button></div>
-        <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="?tab=jadwal">Reset</a></div>
+        <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="<?= e(review_url('jadwal')) ?>">Reset</a></div>
       </form>
     </div>
 
@@ -1530,8 +1848,8 @@ if($rid){
         <div class="col-md-3">
           <select name="unit_id" class="form-select" id="unit-select" required>
             <option value="">Pilih Unit</option>
-            <?php foreach($units as $u){ $uid=(int)$u['id']; $label=$unitOptionLabels[$uid] ?? $u['nama']; ?>
-              <option value="<?= $uid ?>"><?= e($label) ?></option>
+            <?php foreach($units as $u){ ?>
+              <option value="<?= (int)$u['id'] ?>"><?= e($u['nama']) ?></option>
             <?php } ?>
           </select>
         </div>
@@ -1577,7 +1895,7 @@ if($rid){
                 }
             ?>
               <th>
-                <a href="?<?= e(http_build_query($params)) ?>" class="text-decoration-none <?= $isCurrent ? 'fw-semibold' : '' ?>">
+                <a href="<?= e(review_url('jadwal', $params)) ?>" class="text-decoration-none <?= $isCurrent ? 'fw-semibold' : '' ?>">
                   <?= e($colLabel) ?><?= $icon ?>
                 </a>
               </th>
@@ -1625,13 +1943,13 @@ if($rid){
               <tr>
                 <td>
                   <div class="d-flex flex-column">
-                    <a href="?tab=asg&rid=<?= (int)$r['id'] ?>" class="fw-bold"><?= e($r['kode']) ?></a>
+                    <a href="<?= e(review_url('asg', ['rid' => (int)$r['id']])) ?>" class="fw-bold"><?= e($r['kode']) ?></a>
                     <small class="text-muted">
-                    <a href="?tab=asg&rid=<?= (int)$r['id'] ?>">Penugasan</a> &middot;
-                    <a href="?tab=dok&rid=<?= (int)$r['id'] ?>">Dokumen</a> &middot;
-                    <a href="?tab=chr&rid=<?= (int)$r['id'] ?>">CHR</a>
+                    <a href="<?= e(review_url('asg', ['rid' => (int)$r['id']])) ?>">Penugasan</a> &middot;
+                    <a href="<?= e(review_url('dok', ['rid' => (int)$r['id']])) ?>">Dokumen</a> &middot;
+                    <a href="<?= e(review_url('chr', ['rid' => (int)$r['id']])) ?>">CHR</a>
                     <?php if(!is_auditee()){ ?> &middot;
-                      <a href="?tab=laporan&rid=<?= (int)$r['id'] ?>">Verifikasi</a>
+                      <a href="<?= e(review_url('laporan', ['rid' => (int)$r['id']])) ?>">Verifikasi</a>
                     <?php } ?>
                     </small>
                   </div>
@@ -1682,7 +2000,7 @@ if($rid){
                       <button class="btn btn-sm btn-outline-danger">Hapus</button>
                     </form>
                   <?php } ?>
-                  <a class="btn btn-sm btn-outline-success" href="?tab=asg&rid=<?= (int)$r['id'] ?>">Buka</a>
+                  <a class="btn btn-sm btn-outline-success" href="<?= e(review_url('asg', ['rid' => (int)$r['id']])) ?>">Buka</a>
                 </td>
               </tr>
             <?php } } ?>
@@ -1700,7 +2018,7 @@ if($rid){
             <div class="fw-bold"><?= e($rev['kode']) ?> &mdash; <?= e($rev['jenis_nama']) ?> / <?= e($rev['unit_nama']) ?></div>
             <div class="text-muted">Periode: <?= e($rev['periode_mulai']) ?> &rarr; <?= e($rev['periode_selesai']) ?> &middot; Status: <b><?= e($rev['status']) ?></b></div>
           </div>
-          <a class="btn btn-outline-secondary" href="?tab=jadwal">Kembali</a>
+          <a class="btn btn-outline-secondary" href="<?= e(review_url('jadwal')) ?>">Kembali</a>
         </div>
       </div>
 
@@ -1839,14 +2157,14 @@ if($rid){
             <div class="fw-bold"><?= e($rev['kode']) ?> &mdash; <?= e($rev['jenis_nama']) ?> / <?= e($rev['unit_nama']) ?></div>
             <div class="text-muted">Periode: <?= e($rev['periode_mulai']) ?> &rarr; <?= e($rev['periode_selesai']) ?> &middot; Status: <b><?= e($rev['status']) ?></b></div>
           </div>
-          <a class="btn btn-outline-secondary" href="?tab=jadwal">Kembali</a>
+          <a class="btn btn-outline-secondary" href="<?= e(review_url('jadwal')) ?>">Kembali</a>
         </div>
       </div>
 
       <div class="card-soft p-3 mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <h6 class="mb-0">Unggah Dokumen</h6>
-          <a class="btn btn-sm btn-outline-primary" href="dokumen_export.php?rid=<?= (int)$rev['id'] ?>">Export Dokumen</a>
+          <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('dokumen_export.php', ['rid' => (int)$rev['id']])) ?>">Export Dokumen</a>
         </div>
         <form method="post" enctype="multipart/form-data" class="row g-2">
           <?= csrf_field(); ?><input type="hidden" name="action" value="doc_upload">
@@ -1884,8 +2202,8 @@ if($rid){
                         <td><?= e($d['created_at']) ?></td>
                         <td class="text-end">
                           <span class="d-inline-flex gap-2">
-                            <a class="btn btn-sm btn-outline-primary" href="download.php?id=<?= (int)$d['id'] ?>&mode=view" target="_blank" rel="noopener">Lihat</a>
-                            <a class="btn btn-sm btn-outline-success" href="download.php?id=<?= (int)$d['id'] ?>&mode=download" target="_blank" rel="noopener">Unduh</a>
+                            <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('download.php', ['id' => (int)$d['id'], 'mode' => 'view'])) ?>" target="_blank" rel="noopener">Lihat</a>
+                            <a class="btn btn-sm btn-outline-success" href="<?= e(endpoint_url('download.php', ['id' => (int)$d['id'], 'mode' => 'download'])) ?>" target="_blank" rel="noopener">Unduh</a>
                           </span>
                           <?php if(in_array($role,['admin','super_admin','superadmin','moderator'])){ ?>
                           <form method="post" class="d-inline" onsubmit="return confirm('Hapus dokumen ini?')">
@@ -1996,7 +2314,7 @@ if($rid){
             <div class="fw-bold"><?= e($rev['kode']) ?> &mdash; <?= e($rev['jenis_nama']) ?> / <?= e($rev['unit_nama']) ?></div>
             <div class="text-muted">Periode: <?= e($rev['periode_mulai']) ?> &rarr; <?= e($rev['periode_selesai']) ?> &middot; Status: <b><?= e($rev['status']) ?></b></div>
       </div>
-      <a class="btn btn-outline-secondary" href="?tab=jadwal">Kembali</a>
+      <a class="btn btn-outline-secondary" href="<?= e(review_url('jadwal')) ?>">Kembali</a>
     </div>
   </div>
 
@@ -2026,24 +2344,114 @@ if($rid){
             $updatedAtLabel = (string)$chrSheetUpdatedAt;
           }
         }
+        $chrSopSubmitReady = true;
+        $chrSopSubmitErrors = [];
+        $chrSopSignerSelected = 0;
+        $chrSopProfileComplete = 0;
+        $chrSopRequiredCount = 0;
+        if ($useDynamicChr && function_exists('chr_sop_collect_signers')) {
+          $chrSopSigners = chr_sop_collect_signers($chrSheet);
+          $chrSopRequiredCount = max(3, count($chrSopSigners));
+          $seenSignerIds = [];
+          foreach ($chrSopSigners as $signer) {
+            if (!is_array($signer)) { continue; }
+            $signerUserId = (int)($signer['user_id'] ?? 0);
+            if ($signerUserId < 1) { continue; }
+            $chrSopSignerSelected++;
+            if (isset($seenSignerIds[$signerUserId])) {
+              $chrSopSubmitErrors[] = 'Pegawai penanda tangan tidak boleh dobel.';
+            }
+            $seenSignerIds[$signerUserId] = true;
+            $profileComplete = trim((string)($signer['nama'] ?? '')) !== ''
+              && trim((string)($signer['nip'] ?? '')) !== ''
+              && trim((string)($signer['jabatan'] ?? '')) !== ''
+              && (int)($signer['unit_id'] ?? 0) > 0
+              && trim((string)($signer['unit'] ?? '')) !== '';
+            if ($profileComplete) { $chrSopProfileComplete++; }
+          }
+          if (function_exists('chr_sop_required_signers_ready')) {
+            $chrSopSubmitReady = chr_sop_required_signers_ready($chrSheet, $chrSopSubmitErrors);
+          }
+        }
       ?>
       <div class="card-soft p-3 mb-3">
         <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
           <div>
-            <h6 class="mb-0">Form Catatan Hasil Reviu (Word)</h6>
+            <h6 class="mb-0">Form Catatan Hasil Reviu</h6>
             <?php if($updatedAtLabel){ ?><div class="small text-muted">Terakhir diperbarui: <?= e($updatedAtLabel) ?></div><?php } ?>
           </div>
           <?php if($rev && (is_admin_like($role) || is_auditor($role) || is_auditee())){ ?>
             <div class="d-flex gap-2">
-              <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="chr_export.php?rid=<?= (int)$rev['id'] ?>">Export CHR (Word)</a>
-              <a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener" href="chr_export_pdf.php?rid=<?= (int)$rev['id'] ?>">Export CHR (PDF)</a>
+              <?php if($useDynamicChr){ ?>
+                <?php $chrFinalExportReady = $chrWorkflowStatus === 'approved' && $chrSopSubmitReady; ?>
+                <button type="button" class="btn btn-sm btn-outline-success" data-chr-preview-url="<?= e(endpoint_url('chr_sop_export.php', ['rid' => (int)$rev['id'], 'mode' => 'preview', 'format' => 'view'])) ?>">Pratinjau Dokumen</button>
+                <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_sop_export.php', ['rid' => (int)$rev['id'], 'mode' => 'preview', 'format' => 'docx'])) ?>">Unduh Word Pratinjau</a>
+                <a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_sop_export_pdf.php', ['rid' => (int)$rev['id'], 'mode' => 'preview'])) ?>">Unduh PDF Pratinjau</a>
+                <?php if($chrFinalExportReady){ ?>
+                  <a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_sop_export.php', ['rid' => (int)$rev['id'], 'mode' => 'final', 'format' => 'docx'])) ?>">Unduh Word Final</a>
+                  <a class="btn btn-sm btn-danger" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_sop_export_pdf.php', ['rid' => (int)$rev['id'], 'mode' => 'final'])) ?>">Unduh PDF Final</a>
+                <?php } else { ?>
+                  <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true" title="Dokumen final hanya dapat diekspor setelah seluruh pengesahan selesai.">Final belum tersedia</span>
+                <?php } ?>
+              <?php } else { ?>
+                <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_export.php', ['rid' => (int)$rev['id']])) ?>">Export CHR (Word)</a>
+                <a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener" href="<?= e(endpoint_url('chr_export_pdf.php', ['rid' => (int)$rev['id']])) ?>">Export CHR (PDF)</a>
+              <?php } ?>
             </div>
           <?php } ?>
         </div>
         <?php if($canManageChrSheet){ ?>
         <form method="post" class="row g-3" id="chrTemplateForm">
-          <?= csrf_field(); ?><input type="hidden" name="action" value="chr_sheet_save">
+          <?= csrf_field(); ?>
           <input type="hidden" name="reviu_id" value="<?= (int)$rev['id'] ?>">
+          <?php if($useDynamicChr){ ?>
+            <div class="col-12">
+              <?= chr_render_dynamic_form($chrTemplate, $chrSheet, ['rev' => $rev, 'employees' => $chrEmployeeOptions, 'current_user_id' => (int)($_SESSION['user']['id'] ?? 0), 'locked' => $chrWorkflowLocked, 'workflow_status' => $chrWorkflowStatus]) ?>
+            </div>
+            <?php if($chrCanReturnCurrent && in_array($chrWorkflowStatus, ['waiting_signatures','partially_signed'], true)): ?>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Catatan Pengembalian</label>
+                <textarea class="form-control" name="return_note" rows="2" placeholder="Wajib diisi jika mengembalikan untuk perbaikan"></textarea>
+              </div>
+            <?php endif; ?>
+            <?php if($chrWorkflowStatus === 'draft'): ?>
+              <div class="col-12">
+                <div class="chr-submit-readiness d-flex flex-wrap align-items-center justify-content-between gap-2" data-chr-submit-readiness data-min-required="3">
+                  <div>
+                    <div class="fw-semibold text-success">Kesiapan Pengajuan</div>
+                    <div class="small text-muted">
+                      Penanda tangan dipilih: <span data-role="signer-count"><?= (int)$chrSopSignerSelected ?></span><span data-role="required-count"><?= $chrSopRequiredCount ? ' dari minimal '.(int)$chrSopRequiredCount : '' ?></span>.
+                      Profil lengkap: <span data-role="profile-count"><?= (int)$chrSopProfileComplete ?></span><span data-role="profile-total"><?= $chrSopSignerSelected ? ' dari '.(int)$chrSopSignerSelected : '' ?></span>.
+                    </div>
+                  </div>
+                  <span class="badge <?= $chrSopSubmitReady ? 'bg-success' : 'bg-warning text-dark' ?>" data-role="readiness-badge"><?= $chrSopSubmitReady ? 'Siap diajukan' : 'Lengkapi penanda tangan' ?></span>
+                </div>
+              </div>
+            <?php endif; ?>
+            <div class="col-12 d-flex flex-wrap justify-content-end gap-2">
+              <?php if($chrWorkflowStatus === 'draft'): ?>
+                <button type="submit" name="action" value="chr_sheet_save" class="btn btn-outline-success">Simpan Draft</button>
+                <button type="submit" name="action" value="chr_sop_submit" class="btn btn-success" data-chr-submit-button<?= $chrSopSubmitReady ? '' : ' disabled' ?> onclick="return confirm('Ajukan <?= e($chrDocName) ?> untuk pengesahan? Setelah diajukan, isi dokumen akan dikunci sampai dikembalikan untuk perbaikan.');">Ajukan Pengesahan</button>
+              <?php elseif($chrWorkflowStatus === 'returned'): ?>
+                <button type="submit" name="action" value="chr_sop_reopen" class="btn btn-warning" onclick="return confirm('Buka <?= e($chrDocName) ?> untuk perbaikan? Tanda tangan yang sudah ada akan direset.');">Buka untuk Perbaikan</button>
+              <?php elseif(in_array($chrWorkflowStatus, ['waiting_signatures','partially_signed'], true)): ?>
+                <?php if($chrCanReturnCurrent): ?>
+                  <button type="submit" name="action" value="chr_sop_return" class="btn btn-outline-danger">Kembalikan untuk Perbaikan</button>
+                <?php endif; ?>
+                <button type="submit" name="action" value="chr_sheet_save" class="btn btn-success">Simpan Tanda Tangan</button>
+              <?php else: ?>
+                <span class="btn btn-outline-secondary disabled" aria-disabled="true"><?= e($chrDocName) ?> sudah disahkan</span>
+              <?php endif; ?>
+            </div>
+          <?php } else { ?>
+          <?php if(function_exists('chr_rkakl_approval_mode') && chr_rkakl_approval_mode($chrSheet, $rev ?: null) === 'legacy'): ?>
+          <div class="col-12">
+            <div class="alert alert-warning border mb-0">
+              <strong>Mode Legacy RKAKL.</strong>
+              Dokumen ini masih memakai blok tanda tangan manual lama. Data nama, NIP, lokasi, bulan/tahun, dan tanda tangan lama tetap dipertahankan serta tidak dikonversi otomatis ke workflow pengesahan baru.
+            </div>
+          </div>
+          <?php endif; ?>
           <div class="col-12">
             <div class="border rounded-3 p-3 bg-white">
               <h6 class="fw-semibold mb-3">Halaman Sampul</h6>
@@ -2275,11 +2683,12 @@ if($rid){
             </div>
           </div>
           <div class="col-12 text-end">
-            <button type="submit" class="btn btn-success">Simpan Form CHR</button>
+            <button type="submit" name="action" value="chr_sheet_save" class="btn btn-success">Simpan Form CHR</button>
           </div>
+          <?php } ?>
         </form>
         <?php } else { ?>
-          <div class="alert alert-info mb-0">Hubungi auditor untuk memperbarui form CHR. Anda tetap dapat mengunduh versi Word.</div>
+          <div class="alert alert-info mb-0">Hubungi auditor untuk memperbarui form CHR<?= $useDynamicChr ? '.' : '. Anda tetap dapat mengunduh versi Word.' ?></div>
         <?php } ?>
       </div>
 
@@ -2308,7 +2717,7 @@ if($rid){
           <div class="col-12"><textarea class="form-control" name="rekomendasi" placeholder="Rekomendasi" required><?= e($chrEdit['rekomendasi']) ?></textarea></div>
           <div class="col-md-3"><label class="form-label">Tenggat (due)</label><input type="date" name="due_date" class="form-control" required value="<?= e($chrEdit['due_date']) ?>"></div>
           <div class="col-md-2"><button class="btn btn-warning w-100 text-dark">Perbarui</button></div>
-          <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="?tab=chr&rid=<?= (int)$rev['id'] ?>">Batal</a></div>
+          <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="<?= e(review_url('chr', ['rid' => (int)$rev['id']])) ?>">Batal</a></div>
         </form>
       </div>
       <?php } ?>
@@ -2352,7 +2761,7 @@ if($rid){
                   <td>
                     <?php if(in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role)){ ?>
                     <div class="mb-2">
-                      <a class="btn btn-sm btn-outline-secondary" href="?tab=chr&rid=<?= (int)$rev['id'] ?>&edit_chr=<?= (int)$c['id'] ?>">Edit</a>
+                      <a class="btn btn-sm btn-outline-secondary" href="<?= e(review_url('chr', ['rid' => (int)$rev['id'], 'edit_chr' => (int)$c['id']])) ?>">Edit</a>
                     </div>
                     <?php } ?>
                     <form method="post" class="d-flex gap-2">
@@ -2401,8 +2810,8 @@ if($rid){
                   <td><?= e($d['created_at']) ?></td>
                   <td class="text-end">
                     <span class="d-inline-flex gap-2">
-                      <a class="btn btn-sm btn-outline-primary" href="download.php?id=<?= (int)$d['id'] ?>&mode=view" target="_blank" rel="noopener">Lihat</a>
-                      <a class="btn btn-sm btn-outline-success" href="download.php?id=<?= (int)$d['id'] ?>&mode=download" target="_blank" rel="noopener">Unduh</a>
+                      <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('download.php', ['id' => (int)$d['id'], 'mode' => 'view'])) ?>" target="_blank" rel="noopener">Lihat</a>
+                      <a class="btn btn-sm btn-outline-success" href="<?= e(endpoint_url('download.php', ['id' => (int)$d['id'], 'mode' => 'download'])) ?>" target="_blank" rel="noopener">Unduh</a>
                     </span>
                   </td>
                 </tr>
@@ -2425,7 +2834,7 @@ if($rid){
             <div class="fw-bold"><?= e($rev['kode']) ?> &mdash; <?= e($rev['jenis_nama']) ?> / <?= e($rev['unit_nama']) ?></div>
             <div class="text-muted">Status: <b><?= e($rev['status']) ?></b></div>
           </div>
-          <a class="btn btn-outline-secondary" href="?tab=jadwal">Kembali</a>
+          <a class="btn btn-outline-secondary" href="<?= e(review_url('jadwal')) ?>">Kembali</a>
         </div>
       </div>
 
@@ -2439,7 +2848,7 @@ if($rid){
             <?php } elseif($laporanData && !empty($laporanData['created_at'])) { ?>
               <small class="text-muted me-2">Dibuat: <?= e($laporanData['created_at']) ?></small>
             <?php } ?>
-            <a class="btn btn-sm btn-outline-primary" href="laporan_export.php?rid=<?= (int)$rev['id'] ?>">Export Laporan</a>
+            <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('laporan_export.php', ['rid' => (int)$rev['id']])) ?>">Export Laporan</a>
           </div>
         </div>
         <?php if($canManageLaporan){ ?>
@@ -2557,7 +2966,7 @@ if($rid){
                     <td><?= e($row['created_at'] ?? '-') ?></td>
                     <td><?= e($row['updated_at'] ?? '-') ?></td>
                     <td class="text-end">
-                      <a class="btn btn-sm btn-outline-primary" href="laporan_export.php?rid=<?= (int)$rev['id'] ?>&lapid=<?= (int)$row['id'] ?>">Export</a>
+                      <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('laporan_export.php', ['rid' => (int)$rev['id'], 'lapid' => (int)$row['id']])) ?>">Export</a>
                     </td>
                   </tr>
                 <?php } ?>
@@ -2594,7 +3003,7 @@ if($rid){
           <div class="card-soft p-3">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <h6 class="mb-0">Riwayat Verifikasi</h6>
-              <a class="btn btn-sm btn-outline-primary" href="verifikasi_export.php?rid=<?= (int)$rev['id'] ?>">Export Verifikasi</a>
+              <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('verifikasi_export.php', ['rid' => (int)$rev['id']])) ?>">Export Verifikasi</a>
             </div>
             <div class="table-responsive">
               <table class="table">
@@ -2625,7 +3034,7 @@ if($rid){
             'label' => 'Dokumen',
             'title' => $docItem['judul'],
             'time'  => $docItem['created_at'],
-            'link'  => 'download.php?id='.(int)$docItem['id'],
+            'link'  => endpoint_url('download.php', ['id' => (int)$docItem['id']]),
             'is_direct' => false,
           ];
         }
@@ -2924,14 +3333,15 @@ if($rid){
   const form = document.getElementById('chrTemplateForm');
   if (!form) { return; }
   const signatureWrappers = form.querySelectorAll('[data-chr-signature]');
-  if (!signatureWrappers.length) { return; }
 
   const controllers = [];
 
-  signatureWrappers.forEach((wrapper) => {
+  const initSignatureWrapper = (wrapper) => {
+    if (!wrapper || wrapper.dataset.chrSignatureReady === '1') { return; }
     const canvas = wrapper.querySelector('canvas');
     const hiddenInput = wrapper.querySelector('[data-role="input"]');
     if (!canvas || !hiddenInput) { return; }
+    wrapper.dataset.chrSignatureReady = '1';
 
     const ctx = canvas.getContext('2d');
     const overlay = wrapper.querySelector('.sig-overlay');
@@ -2939,6 +3349,8 @@ if($rid){
     const previewImg = wrapper.querySelector('[data-role="preview-img"]');
     const clearBtn = wrapper.querySelector('[data-action="sig-clear"]');
     const saveBtn = wrapper.querySelector('[data-action="sig-save"]');
+    const clearInput = wrapper.querySelector('[data-role="clear-input"]');
+    const isDisabled = () => wrapper.getAttribute('data-signature-disabled') === '1';
     canvas.style.touchAction = 'none';
 
     const strokes = [];
@@ -2952,10 +3364,15 @@ if($rid){
     const updateOverlay = () => {
       const hasContent = hasSignature();
       wrapper.classList.toggle('is-drawing', hasContent || drawing);
+      wrapper.classList.toggle('is-disabled', isDisabled());
       if (overlay) {
         overlay.style.opacity = hasContent || drawing ? '0' : '';
       }
       if (saveBtn) {
+        if (isDisabled()) {
+          saveBtn.disabled = true;
+          return;
+        }
         if (hasContent) {
           if (!savedState) {
             saveBtn.textContent = 'Simpan Tanda Tangan';
@@ -3052,6 +3469,7 @@ if($rid){
     };
 
     const pointerDown = (evt) => {
+      if (isDisabled()) { return; }
       evt.preventDefault();
       setCanvasSize();
       drawing = true;
@@ -3083,6 +3501,7 @@ if($rid){
     };
 
     const clearSignature = () => {
+      if (isDisabled()) { return; }
       strokes.length = 0;
       currentStroke = null;
       drawing = false;
@@ -3090,6 +3509,9 @@ if($rid){
       savedState = false;
       redraw();
       hiddenInput.value = '';
+      if (clearInput) {
+        clearInput.value = '1';
+      }
       if (previewImg) {
         previewImg.hidden = true;
         previewImg.removeAttribute('src');
@@ -3100,10 +3522,14 @@ if($rid){
     };
 
     const saveSignature = () => {
+      if (isDisabled()) { return; }
       if (!hasSignature()) { return; }
       try {
         const dataUrl = exportSignature();
         hiddenInput.value = dataUrl;
+        if (clearInput) {
+          clearInput.value = '0';
+        }
         if (previewImg) {
           previewImg.src = dataUrl;
           previewImg.hidden = false;
@@ -3172,6 +3598,17 @@ if($rid){
         previewContainer.hidden = false;
       }
     }
+  };
+
+  signatureWrappers.forEach(initSignatureWrapper);
+
+  document.addEventListener('chr:dynamic-row-added', (event) => {
+    const root = event.detail && event.detail.root ? event.detail.root : null;
+    if (!root) { return; }
+    if (root.matches && root.matches('[data-chr-signature]')) {
+      initSignatureWrapper(root);
+    }
+    root.querySelectorAll('[data-chr-signature]').forEach(initSignatureWrapper);
   });
 
   if (!controllers.length) { return; }
@@ -3190,7 +3627,98 @@ if($rid){
 })();
 </script>
 
+<div class="modal fade chr-preview-modal" id="chrPreviewModal" tabindex="-1" aria-labelledby="chrPreviewModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="chrPreviewModalLabel">Pratinjau Dokumen CHR</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="alert alert-danger m-3 d-none" id="chrPreviewError">Pratinjau gagal dimuat. Silakan coba unduh dokumen atau buka kembali halaman ini.</div>
+        <iframe class="chr-preview-frame" id="chrPreviewFrame" title="Pratinjau Dokumen CHR" loading="lazy"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function(){
+  function targetFromHash() {
+    var raw = window.location.hash ? window.location.hash.substring(1) : '';
+    if (!raw) { return null; }
+    var id = '';
+    try { id = decodeURIComponent(raw); } catch (e) { id = raw; }
+    var target = document.getElementById(id);
+    if (!target && id.indexOf('approval-') === 0) {
+      target = document.getElementById('approval-section');
+    }
+    return target;
+  }
+  function focusSignerAction(target) {
+    var focusable = target.querySelector('[data-action="sig-save"]:not([disabled]), [data-action="sig-clear"]:not([disabled]), canvas, button:not([disabled]), input:not([type="hidden"]), select, textarea');
+    if (focusable && typeof focusable.focus === 'function') {
+      focusable.focus({ preventScroll: true });
+    } else if (typeof target.focus === 'function') {
+      target.focus({ preventScroll: true });
+    }
+  }
+  function activateApprovalAnchor() {
+    var target = targetFromHash();
+    if (!target) { return; }
+    window.setTimeout(function() {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('approval-anchor-highlight');
+      focusSignerAction(target);
+      window.setTimeout(function() {
+        target.classList.remove('approval-anchor-highlight');
+      }, 2800);
+    }, 120);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', activateApprovalAnchor);
+  } else {
+    activateApprovalAnchor();
+  }
+  window.addEventListener('hashchange', activateApprovalAnchor);
+})();
+</script>
+<script>
+(function(){
+  var modalEl = document.getElementById('chrPreviewModal');
+  var frame = document.getElementById('chrPreviewFrame');
+  var errorBox = document.getElementById('chrPreviewError');
+  if (!modalEl || !frame || !window.bootstrap) { return; }
+  var modal = new bootstrap.Modal(modalEl);
+  var previewTimer = null;
+  document.addEventListener('click', function(event) {
+    var btn = event.target.closest('[data-chr-preview-url]');
+    if (!btn) { return; }
+    event.preventDefault();
+    if (errorBox) { errorBox.classList.add('d-none'); }
+    frame.src = btn.getAttribute('data-chr-preview-url') || 'about:blank';
+    window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(function() {
+      if (errorBox) { errorBox.classList.remove('d-none'); }
+    }, 12000);
+    modal.show();
+  });
+  frame.addEventListener('load', function() {
+    window.clearTimeout(previewTimer);
+    if (errorBox) { errorBox.classList.add('d-none'); }
+  });
+  frame.addEventListener('error', function() {
+    window.clearTimeout(previewTimer);
+    if (errorBox) { errorBox.classList.remove('d-none'); }
+  });
+  modalEl.addEventListener('hidden.bs.modal', function() {
+    window.clearTimeout(previewTimer);
+    if (errorBox) { errorBox.classList.add('d-none'); }
+    frame.removeAttribute('src');
+  });
+})();
+</script>
 <script>
 document.addEventListener('click', function(e) {
   var btn = e.target.closest('.comment-reply-toggle');

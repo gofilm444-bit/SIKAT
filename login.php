@@ -6,6 +6,8 @@
 
 require_once __DIR__ . '/includes/security_headers.php';
 
+require_once __DIR__ . '/includes/url_helpers.php';
+
 require_once __DIR__ . '/includes/session_hardening.php';
 
 
@@ -17,13 +19,13 @@ if ($__isAuth) {
 
   // Admin & Super Admin langsung dashboard
   if (in_array($r, ['super_admin','admin'], true)) {
-    header('Location: dashboard.php');
+    header('Location: ' . route_url('dashboard'));
     exit;
   }
 
-  // Non-admin: biarkan tetap di login.php?logged_in=1 sebagai halaman menu
+  // Non-admin: biarkan tetap di halaman login mode logged_in sebagai halaman menu
   if (!isset($_GET['logged_in'])) {
-    header('Location: login.php?logged_in=1');
+    header('Location: ' . route_url('login', ['logged_in' => 1]));
     exit;
   }
 }
@@ -516,10 +518,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='login'))
 
     // Admin & Super Admin langsung dashboard
     if (in_array($roleAfter, ['super_admin','admin'], true)) {
-      $redirect = 'dashboard.php';
+      $redirect = route_url('dashboard');
     } else {
       // Auditee/Auditor dkk masuk ke halaman menu (login page mode logged_in)
-      $redirect = 'login.php?logged_in=1';
+      $redirect = route_url('login', ['logged_in' => 1]);
     }
     
     if (login_is_ajax()) {
@@ -611,7 +613,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action'] ?? '')==='logout')
 
   }
 
-  force_logout_and_redirect('login.php?logged_out=1');
+  force_logout_and_redirect(route_url('login', ['logged_out' => 1]));
 
 }
 
@@ -744,7 +746,7 @@ if (!empty($admins)) {
 
            <blockquote style="border-left:4px solid #ccc;padding-left:8px">'.nl2br(e($judul)).'...</blockquote>
 
-           <p><a href="'.e((isset($_SERVER['REQUEST_SCHEME'])?$_SERVER['REQUEST_SCHEME']:'http').'://'.$_SERVER['HTTP_HOST'].dirname($_SERVER['PHP_SELF']).'/pelaporan.php?q='.urlencode($kode)).'">Buka di Admin</a></p>';
+           <p><a href="'.e((isset($_SERVER['REQUEST_SCHEME'])?$_SERVER['REQUEST_SCHEME']:'http').'://'.$_SERVER['HTTP_HOST'].route_url('pelaporan', ['q' => $kode])).'">Buka di Admin</a></p>';
 
   @mailer_send($admins, $subject, $html);
 
@@ -864,7 +866,7 @@ if (move_uploaded_file($tmp, $dest)) {
 
   if ($conn->query("SHOW TABLES LIKE 'notifikasi'")->num_rows) {
 
-    $judulNotif='Laporan baru: '.$kategori; $pesanNotif='Kode '.$kode.' status "'.$status.'".'; $linkNotif='pelaporan.php?q='.$kode;
+    $judulNotif='Laporan baru: '.$kategori; $pesanNotif='Kode '.$kode.' status "'.$status.'".'; $linkNotif=route_url('pelaporan', ['q' => $kode]);
 
     $stmtN=$conn->prepare("INSERT INTO notifikasi (jenis, judul, pesan, link) VALUES ('pelaporan_baru', ?, ?, ?)");
 
@@ -1115,7 +1117,7 @@ function login_column_exists(mysqli $conn, string $table, string $column): bool 
 }
 
 $publicMediaBase = __DIR__ . '/assets/public';
-$publicMediaUrl = '/ski_new/assets/public';
+$publicMediaUrl = asset_url('assets/public');
 $publicMediaSlides = [];
 
 if (login_table_exists($conn, 'public_media')) {
@@ -1143,8 +1145,8 @@ if (login_table_exists($conn, 'public_media')) {
       if ($slideInterval > 30000) $slideInterval = 30000;
       $publicMediaSlides[] = [
         'type' => $mediaType,
-        'src' => '/ski_new/' . ltrim(str_replace('\\', '/', $relPath), '/'),
-        'thumbnail' => ($thumbnailPath !== '' && is_file($thumbnailFullPath)) ? '/ski_new/' . ltrim(str_replace('\\', '/', $thumbnailPath), '/') : '',
+        'src' => asset_url(ltrim(str_replace('\\', '/', $relPath), '/')),
+        'thumbnail' => ($thumbnailPath !== '' && is_file($thumbnailFullPath)) ? asset_url(ltrim(str_replace('\\', '/', $thumbnailPath), '/')) : '',
         'title' => trim((string)($media['title'] ?? '')),
         'caption' => trim((string)($media['caption'] ?? '')),
         'auto_slide' => $autoSlide === 1 ? 1 : 0,
@@ -1269,8 +1271,8 @@ if (login_table_exists($conn, 'public_social_links')) {
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 
-  <link href="assets/css/ui_base.css" rel="stylesheet">
-  <link rel="preload" as="image" href="/ski_new/asset/logo-sikat-baru-140.png">
+  <link href="<?= e(asset_url('assets/css/ui_base.css')) ?>" rel="stylesheet">
+  <link rel="preload" as="image" href="<?= e(asset_url('asset/logo-sikat-baru-140.png')) ?>">
 
   <style>
 
@@ -1452,7 +1454,7 @@ if (login_table_exists($conn, 'public_social_links')) {
 
   </style>
 
-  <link rel="stylesheet" href="assets/css/password_toggle.css">
+  <link rel="stylesheet" href="<?= e(asset_url('assets/css/password_toggle.css')) ?>">
 
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 
@@ -1799,7 +1801,7 @@ body.sikat-lightbox-open {
       <div class="d-flex align-items-center gap-3">
 
         <span class="sikat-logo-wrap">
-          <img src="/ski_new/asset/logo-sikat-baru-140.png" alt="SIKAT" class="login-logo public-logo">
+          <img src="<?= e(asset_url('asset/logo-sikat-baru-140.png')) ?>" alt="SIKAT" class="login-logo public-logo">
         </span>
 
         <div class="brand-title">Sistem Informasi Kepatuhan Internal Poltekkes Ternate (SIKAT)</div>
@@ -1832,15 +1834,15 @@ body.sikat-lightbox-open {
             ?>
             
             <?php if ($akses_dashboard === 1): ?>
-              <li><a class="dropdown-item" href="dashboard.php"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
+              <li><a class="dropdown-item" href="<?= e(route_url('dashboard')) ?>"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
             <?php endif; ?>
             
             <?php if ($akses_pelaporan === 1): ?>
-              <li><a class="dropdown-item" href="pelaporan.php"><i class="bi bi-list-check me-1"></i>Pelaporan</a></li>
+              <li><a class="dropdown-item" href="<?= e(route_url('pelaporan')) ?>"><i class="bi bi-list-check me-1"></i>Pelaporan</a></li>
             <?php endif; ?>
             
             <?php if ($akses_review === 1): ?>
-              <li><a class="dropdown-item" href="review.php"><i class="bi bi-clipboard-check me-1"></i>Review</a></li>
+              <li><a class="dropdown-item" href="<?= e(route_url('review')) ?>"><i class="bi bi-clipboard-check me-1"></i>Review</a></li>
             <?php endif; ?>
 
 
@@ -1902,7 +1904,7 @@ body.sikat-lightbox-open {
               <a class="hero-service-link" href="#pelaporan" data-modal-target="pelaporanModal"><i class="bi bi-flag"></i><span>Pelaporan</span><i class="bi bi-arrow-right-short"></i></a>
               <a class="hero-service-link" href="#lacak-pengaduan" data-modal-target="lacakModal"><i class="bi bi-search"></i><span>Lacak Pengaduan</span><i class="bi bi-arrow-right-short"></i></a>
               <a class="hero-service-link" href="#saran-kritik" data-modal-target="saranModal"><i class="bi bi-chat-dots"></i><span>Saran & Kritik</span><i class="bi bi-arrow-right-short"></i></a>
-              <a class="hero-service-link" href="kebijakan.php"><i class="bi bi-journal-text"></i><span>Data Kebijakan</span><i class="bi bi-arrow-right-short"></i></a>
+              <a class="hero-service-link" href="<?= e(route_url('kebijakan')) ?>"><i class="bi bi-journal-text"></i><span>Data Kebijakan</span><i class="bi bi-arrow-right-short"></i></a>
             </div>
           </div>
 
@@ -2038,9 +2040,9 @@ body.sikat-lightbox-open {
       <div class="internal-section-title">Akses Internal</div>
       <div class="text-muted small mb-2">Fitur berikut digunakan oleh pengguna internal/petugas yang memiliki akun.</div>
       <div class="internal-grid">
-        <a class="service-card internal-card" href="review.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-clipboard2-data"></i></div><h3>E-Reviu</h3><p>Akses modul e-reviu untuk proses reviu internal yang terdokumentasi.</p><span class="service-action">Masuk E-Reviu <i class="bi bi-arrow-right-short"></i></span></a>
-        <a class="service-card internal-card" href="risiko.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-shield-check"></i></div><h3>Manajemen Risiko</h3><p>Pantau dan kelola risiko internal sesuai proses manajemen risiko.</p><span class="service-action">Akses Risiko <i class="bi bi-arrow-right-short"></i></span></a>
-        <a class="service-card internal-card" href="self_assessment.php"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-check2-square"></i></div><h3>Self-Assessment</h3><p>Gunakan modul penilaian mandiri untuk mendukung evaluasi kepatuhan.</p><span class="service-action">Mulai Assessment <i class="bi bi-arrow-right-short"></i></span></a>
+        <a class="service-card internal-card" href="<?= e(route_url('review')) ?>"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-clipboard2-data"></i></div><h3>E-Reviu</h3><p>Akses modul e-reviu untuk proses reviu internal yang terdokumentasi.</p><span class="service-action">Masuk E-Reviu <i class="bi bi-arrow-right-short"></i></span></a>
+        <a class="service-card internal-card" href="<?= e(route_url('risiko')) ?>"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-shield-check"></i></div><h3>Manajemen Risiko</h3><p>Pantau dan kelola risiko internal sesuai proses manajemen risiko.</p><span class="service-action">Akses Risiko <i class="bi bi-arrow-right-short"></i></span></a>
+        <a class="service-card internal-card" href="<?= e(route_url('self-assessment')) ?>"><span class="internal-badge position-absolute top-0 end-0 mt-2 me-2">Internal</span><div class="service-icon"><i class="bi bi-check2-square"></i></div><h3>Self-Assessment</h3><p>Gunakan modul penilaian mandiri untuk mendukung evaluasi kepatuhan.</p><span class="service-action">Mulai Assessment <i class="bi bi-arrow-right-short"></i></span></a>
       </div>
       <div class="contact-callout">
         <div><strong>Butuh bantuan?</strong> Hubungi pengelola SIKAT atau tim terkait untuk informasi lebih lanjut.</div>
@@ -2375,9 +2377,9 @@ body.sikat-lightbox-open {
 
                     <div class="mt-1 d-inline-flex gap-2">
 
-                      <a class="btn btn-sm btn-outline-primary" href="attachment_download.php?id=<?= (int)$f['id'] ?>&mode=view" target="_blank" rel="noopener">Lihat</a>
+                      <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('attachment_download.php', ['id' => (int)$f['id'], 'mode' => 'view'])) ?>" target="_blank" rel="noopener">Lihat</a>
 
-                      <a class="btn btn-sm btn-outline-success" href="attachment_download.php?id=<?= (int)$f['id'] ?>&mode=download" download>Unduh</a>
+                      <a class="btn btn-sm btn-outline-success" href="<?= e(endpoint_url('attachment_download.php', ['id' => (int)$f['id'], 'mode' => 'download'])) ?>" download>Unduh</a>
 
                     </div>
 
@@ -2599,13 +2601,13 @@ body.sikat-lightbox-open {
 
           crossorigin="anonymous"></script>
 
-  <script defer src="assets/js/password_toggle.js"></script>
+  <script defer src="<?= e(asset_url('assets/js/password_toggle.js')) ?>"></script>
 
   <script>
 
     if (typeof window.bootstrap === 'undefined') {
 
-      var s = document.createElement('script'); s.src = 'assets/bootstrap.bundle.min.js'; document.body.appendChild(s);
+      var s = document.createElement('script'); s.src = '<?= e(asset_url('assets/bootstrap.bundle.min.js')) ?>'; document.body.appendChild(s);
 
     }
 

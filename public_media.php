@@ -10,7 +10,7 @@ if (in_array($env, ['local','dev','development'], true)) {
     ini_set('display_errors', 0);
 }
 
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 
 $role = strtolower((string)($_SESSION['user']['peran'] ?? ''));
 $roleRaw = strtolower((string)($_SESSION['user']['peran_raw'] ?? $role));
@@ -100,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_validate($_POST['csrf'] ?? '');
     if (!$tableReady) {
         media_flash('danger', 'Tabel public_media belum tersedia. Jalankan migration terlebih dahulu.');
-        header('Location: public_media.php'); exit;
+        header('Location: ' . route_url('public_media')); exit;
     }
 
     $action = (string)($_POST['action'] ?? '');
@@ -111,12 +111,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id <= 0 || $thumbnailData === '') {
             media_flash('danger', 'Data thumbnail tidak lengkap.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         if (!preg_match('/^data:image\/(png|jpeg|jpg|webp);base64,/', $thumbnailData, $matches)) {
             media_flash('danger', 'Format thumbnail tidak valid.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $ext = strtolower($matches[1]);
@@ -129,24 +129,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($binary === false || strlen($binary) < 100) {
             media_flash('danger', 'Gagal membaca data thumbnail.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         if (strlen($binary) > 3 * 1024 * 1024) {
             media_flash('danger', 'Ukuran thumbnail maksimal 3 MB.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $imgInfo = @getimagesizefromstring($binary);
         if ($imgInfo === false) {
             media_flash('danger', 'Thumbnail bukan gambar yang valid.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $stmt = $conn->prepare("SELECT id, media_type, thumbnail_path FROM public_media WHERE id=? LIMIT 1");
         if (!$stmt) {
             media_flash('danger', 'Gagal menyiapkan validasi media.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $stmt->bind_param('i', $id);
@@ -156,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$mediaRow || ($mediaRow['media_type'] ?? '') !== 'video') {
             media_flash('danger', 'Media video tidak ditemukan.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $dir = __DIR__ . '/assets/public/media';
@@ -170,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (file_put_contents($dest, $binary) === false) {
             media_flash('danger', 'Gagal menyimpan thumbnail.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         @chmod($dest, 0644);
@@ -186,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt = $conn->prepare("UPDATE public_media SET thumbnail_path=?, updated_at=NOW() WHERE id=?");
         if (!$stmt) {
             media_flash('danger', 'Gagal menyiapkan update thumbnail.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $stmt->bind_param('si', $relativePath, $id);
@@ -194,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
 
         media_flash('success', 'Thumbnail video berhasil diperbarui dari frame yang dipilih.');
-        header('Location: public_media.php'); exit;
+        header('Location: ' . route_url('public_media')); exit;
     }
     if ($action === 'upload') {
         $title = trim((string)($_POST['title'] ?? ''));
@@ -207,15 +207,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($title === '') {
             media_flash('danger', 'Judul media wajib diisi.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if (!$swiftReady) {
             media_flash('danger', 'Kolom Swift Otomatis belum tersedia. Jalankan migration terlebih dahulu.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if (empty($_FILES['media_file']) || (int)($_FILES['media_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
             media_flash('danger', 'File media wajib dipilih.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $file = $_FILES['media_file'];
@@ -230,17 +230,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $blocked = ['php','phtml','php3','php4','php5','php7','php8','phar','html','htm','js','exe','bat','cmd','sh'];
         if ($mediaType === '' || in_array($ext, $blocked, true)) {
             media_flash('danger', 'Format file tidak diizinkan.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if (!in_array($requestedType, ['image', 'video'], true) || $requestedType !== $mediaType) {
             media_flash('danger', 'Tipe media harus sesuai dengan file yang diupload.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $maxSize = $mediaType === 'image' ? 5 * 1024 * 1024 : 30 * 1024 * 1024;
         if ($size <= 0 || $size > $maxSize) {
             media_flash('danger', $mediaType === 'image' ? 'Ukuran gambar maksimal 5 MB.' : 'Ukuran video maksimal 30 MB.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $finfo = new finfo(FILEINFO_MIME_TYPE);
@@ -251,22 +251,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
         if (!in_array($mime, $allowedMime, true)) {
             media_flash('danger', 'Tipe MIME file tidak valid.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if ($mediaType === 'image' && !in_array($ext, $imageExt, true)) {
             media_flash('danger', 'Ekstensi gambar tidak valid.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if ($mediaType === 'video' && !in_array($ext, $videoExt, true)) {
             media_flash('danger', 'Ekstensi video tidak valid.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $storedName = 'public_media_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
         $dest = $mediaDir . DIRECTORY_SEPARATOR . $storedName;
         if (!move_uploaded_file($tmp, $dest)) {
             media_flash('danger', 'Gagal menyimpan file media.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
 
         $relPath = 'assets/public/media/' . $storedName;
@@ -281,7 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 media_flash('danger', 'Gagal menyimpan metadata media.');
             }
         }
-        header('Location: public_media.php'); exit;
+        header('Location: ' . route_url('public_media')); exit;
     }
 
     if ($action === 'update') {
@@ -294,7 +294,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $slideInterval = media_slide_interval_from_post('slide_interval_seconds');
         if (!$swiftReady) {
             media_flash('danger', 'Kolom Swift Otomatis belum tersedia. Jalankan migration terlebih dahulu.');
-            header('Location: public_media.php'); exit;
+            header('Location: ' . route_url('public_media')); exit;
         }
         if ($id > 0 && $title !== '' && ($stmt = $conn->prepare("UPDATE public_media SET title=?, caption=?, sort_order=?, is_active=?, auto_slide=?, slide_interval=?, updated_at=NOW() WHERE id=?"))) {
             $stmt->bind_param('ssiiiii', $title, $caption, $sortOrder, $isActive, $autoSlide, $slideInterval, $id);
@@ -304,7 +304,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             media_flash('danger', 'Data media tidak valid.');
         }
-        header('Location: public_media.php'); exit;
+        header('Location: ' . route_url('public_media')); exit;
     }
 
     if ($action === 'delete') {
@@ -325,7 +325,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($relPath !== '') media_safe_unlink($relPath);
             media_flash('success', 'Media publik dihapus.');
         }
-        header('Location: public_media.php'); exit;
+        header('Location: ' . route_url('public_media')); exit;
     }
 }
 
@@ -345,7 +345,7 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
   <style>
     body{background:#f4faf6;color:#0b3d2e;}
     .wrap{max-width:1120px;margin:24px auto 48px;padding:0 14px;}
@@ -364,7 +364,7 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
       <h1 class="h4 text-success mb-1">Kelola Media Publik</h1>
       <div class="text-muted">Atur gambar dan video edukasi yang tampil di carousel halaman publik SIKAT.</div>
     </div>
-    <a href="dashboard.php" class="btn btn-outline-success"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
+    <a href="<?= e(route_url('dashboard')) ?>" class="btn btn-outline-success"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
   </div>
 
   <?php if ($flash): ?>
@@ -447,7 +447,7 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
           <tbody>
             <?php foreach ($items as $item): ?>
               <?php
-                $src = '/ski_new/' . ltrim(str_replace('\\', '/', (string)$item['file_path']), '/');
+                $src = asset_url(ltrim(str_replace('\\', '/', (string)$item['file_path']), '/'));
                 $itemAutoSlide = (int)($item['auto_slide'] ?? 1);
                 $itemSlideSeconds = media_interval_seconds_label($item['slide_interval'] ?? 6500);
               ?>
@@ -558,7 +558,7 @@ if ($tableReady && ($rs = $conn->query("SELECT * FROM public_media ORDER BY sort
 
           var form = document.createElement('form');
           form.method = 'POST';
-          form.action = 'public_media.php';
+          form.action = '<?= e(route_url('public_media')) ?>';
 
           var fields = {
             action: 'capture_thumbnail',
@@ -665,7 +665,7 @@ table video,
 
             var submitForm = document.createElement('form');
             submitForm.method = 'POST';
-            submitForm.action = 'public_media.php';
+            submitForm.action = '<?= e(route_url('public_media')) ?>';
 
             var csrfInput = document.querySelector('input[name="csrf"]');
             var fields = {

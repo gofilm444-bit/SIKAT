@@ -670,7 +670,7 @@ if (!function_exists('pelaporan_redirect_with_filters')) {
 
 /* ===== Akses ===== */
 
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 
 $actor = pelaporan_actor_group($_SESSION['user']);
 
@@ -1870,7 +1870,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
 
   <style>
 
@@ -1914,7 +1914,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
   <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
 
-    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="if(window.history.length>1){window.history.back();}else{window.location.href='dashboard.php';}">
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="if(window.history.length>1){window.history.back();}else{window.location.href='<?= e(route_url('dashboard')) ?>';}">
 
       <i class="bi bi-arrow-left"></i> Kembali
 
@@ -1922,7 +1922,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
     <?php if (!is_auditee()): ?>
 
-    <a class="btn btn-success btn-sm" href="dashboard.php">
+    <a class="btn btn-success btn-sm" href="<?= e(route_url('dashboard')) ?>">
 
       <i class="bi bi-speedometer2"></i> Dashboard
 
@@ -2154,7 +2154,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <?php if($cnt>0): ?>
 
-                    <a class="btn btn-sm btn-outline-success" href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>">Lihat (<?= $cnt ?>)</a>
+                    <a class="btn btn-sm btn-outline-success" href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>">Lihat (<?= $cnt ?>)</a>
 
                   <?php else: ?>
 
@@ -2270,7 +2270,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <div class="d-flex flex-column gap-2">
 
-                    <a class="btn btn-sm btn-outline-secondary" href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>"><i class="bi bi-clock-history me-1"></i>Riwayat</a>
+                    <a class="btn btn-sm btn-outline-secondary" href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>"><i class="bi bi-clock-history me-1"></i>Riwayat</a>
 
                     <?php if(!empty($r['actions'])): ?>
 
@@ -2403,16 +2403,3 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 </body>
 
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -28,7 +28,7 @@ $conn->set_charset('utf8mb4');
 
 require_once __DIR__.'/pelaporan_helpers.php';
 
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 $actor = pelaporan_actor_group($_SESSION['user']);
 if (!in_array($actor, ['admin','kepala_ski','direktur'], true)) {
     http_response_code(403);
@@ -103,7 +103,7 @@ if ($actor === 'direktur') {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
   <style>
     :root{ --brand:#218838; --accent:#f0c300; --soft:#f4f8f5; --border:#d6e9de; }
     body{background:var(--soft);}
@@ -176,8 +176,8 @@ if ($actor === 'direktur') {
                 <div class="fw-semibold"><?= e($f['original_name']) ?></div>
                 <small class="text-muted d-block">(<?= e($f['mime']) ?>, <?= number_format($f['size_bytes']/1024,1) ?> KB)</small>
                 <div class="mt-1 d-inline-flex gap-2">
-                  <a class="btn btn-sm btn-outline-primary" href="attachment_download.php?id=<?= (int)$f['id'] ?>&mode=view" target="_blank" rel="noopener">Lihat</a>
-                  <a class="btn btn-sm btn-outline-success" href="attachment_download.php?id=<?= (int)$f['id'] ?>&mode=download" download>Unduh</a>
+                  <a class="btn btn-sm btn-outline-primary" href="<?= e(endpoint_url('attachment_download.php', ['id' => (int)$f['id'], 'mode' => 'view'])) ?>" target="_blank" rel="noopener">Lihat</a>
+                  <a class="btn btn-sm btn-outline-success" href="<?= e(endpoint_url('attachment_download.php', ['id' => (int)$f['id'], 'mode' => 'download'])) ?>" download>Unduh</a>
                 </div>
               </li>
             <?php endforeach; ?>

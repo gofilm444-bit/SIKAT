@@ -3,7 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/audit_log.php';
 require_once 'db/koneksi.php';
-if(!isset($_SESSION['user'])) header('Location: login.php');
+if(!isset($_SESSION['user'])) header('Location: ' . route_url('login'));
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { csrf_validate($_POST['csrf'] ?? ''); }
 
 function e($value): string {
@@ -97,7 +97,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_kebijakan'])) {
         audit_log($conn, 'delete', 'kebijakan', $id);
     }
     $_SESSION['flash'] = $res ? 'Data berhasil dihapus.' : 'Gagal menghapus data!';
-    header('Location: kebijakan.php'); exit;
+    header('Location: ' . route_url('kebijakan')); exit;
 }
 $status_list = ['Aktif', 'Tidak Aktif'];
 if(isset($_POST['tambah_kebijakan'])) {
@@ -125,7 +125,7 @@ if(isset($_POST['tambah_kebijakan'])) {
         }
         $_SESSION['flash'] = $res ? 'Data berhasil ditambah.' : 'Gagal menambah data!';
     }
-    header('Location: kebijakan.php'); exit;
+    header('Location: ' . route_url('kebijakan')); exit;
 }
 if(isset($_POST['edit_kebijakan'])) {
     $id = intval($_POST['id_kebijakan']);
@@ -152,7 +152,7 @@ if(isset($_POST['edit_kebijakan'])) {
         }
         $_SESSION['flash'] = $res ? 'Data berhasil diubah.' : 'Gagal mengubah data!';
     }
-    header('Location: kebijakan.php'); exit;
+    header('Location: ' . route_url('kebijakan')); exit;
 }
 $edit_mode = false;
 $edit_data = ['id'=>'','judul'=>'','kategori'=>'','tahun'=>'', 'status'=>''];
@@ -174,7 +174,7 @@ if(isset($_GET['edit_kebijakan'])) {
 <head>
     <title>Kebijakan & Regulasi</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="assets/css/ui_base.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>">
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 </head>
 <body>

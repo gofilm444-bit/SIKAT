@@ -27,7 +27,7 @@ $conn->set_charset('utf8mb4');
 require_once __DIR__.'/pelaporan_helpers.php';
 
 /* ====== AuthZ (admin/moderator) ====== */
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 
 $role = strtolower($_SESSION['user']['peran'] ?? '');
 $roleRaw = strtolower($_SESSION['user']['peran_raw'] ?? $role);
@@ -86,7 +86,7 @@ if (
   $akses_dashboard !== 1
   && (in_array($role, $reviewRedirectRoles, true) || in_array($roleRaw, $reviewRedirectRoles, true))
 ) {
-  header('Location: review.php');
+  header('Location: ' . route_url('review'));
   exit;
 }
 
@@ -263,7 +263,7 @@ if (dashboard_table_exists($conn, 'reviu_chr') && dashboard_column_exists($conn,
           'title' => trim((string)($row['rekomendasi'] ?? 'Rekomendasi tindak lanjut')),
           'meta' => 'Deadline ' . dashboard_datetime_short((string)($row['due_date'] ?? '')),
           'status' => (string)($row['status_tl'] ?? 'Belum TL'),
-          'href' => 'review.php',
+          'href' => route_url('review'),
         ];
       }
       $qd->free();
@@ -278,7 +278,7 @@ if (empty($deadlineItems) && dashboard_table_exists($conn, 'reviu') && dashboard
         'title' => 'Review ' . ((string)($row['kode'] ?? '') ?: 'Internal'),
         'meta' => 'Deadline ' . dashboard_datetime_short((string)($row['tgl_deadline'] ?? '')),
         'status' => (string)($row['status'] ?? 'Terjadwal'),
-        'href' => 'review.php',
+        'href' => route_url('review'),
       ];
     }
     $qd->free();
@@ -309,8 +309,8 @@ $insights = [
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="assets/css/ui_base.css" rel="stylesheet">
-  <link rel="preload" as="image" href="/ski_new/asset/logo-sikat-baru-140.png">
+  <link href="<?= e(asset_url('assets/css/ui_base.css')) ?>" rel="stylesheet">
+  <link rel="preload" as="image" href="<?= e(asset_url('asset/logo-sikat-baru-140.png')) ?>">
   <style>
     :root{
       --brand:#218838; --brand-dark:#1b6e2c; --accent:#f0c300;
@@ -457,24 +457,11 @@ $insights = [
 
 <!-- ====== HEADER + MENU (sesuai screenshot) ====== -->
 <section class="hero container sikat-hero">
-  <img class="brand-logo hero-logo" src="/ski_new/asset/logo-sikat-baru-140.png" alt="SIKAT">
+  <img class="brand-logo hero-logo" src="<?= e(asset_url('asset/logo-sikat-baru-140.png')) ?>" alt="SIKAT">
   <h2 class="title mt-1 hero-title">Dashboard SIKAT</h2>
   <p class="subtitle hero-subtitle">Ringkasan eksekutif SKI, kepatuhan internal, risiko, tindak lanjut, dan pelaporan Poltekkes Ternate.</p>
   <p class="mt-1 fw-semibold hero-greeting">Halo, <?= e($_SESSION['user']['nama'] ?? 'Pengguna') ?>!</p>
 
-  <div class="menu-bar d-inline-block mt-1 sikat-quick-actions">
-    <div class="d-flex flex-wrap gap-2 justify-content-center quick-actions-row">
-      <a href="kebijakan.php" class="btn sikat-quick-btn"><i class="bi bi-journal-check"></i> Kebijakan</a>
-      <a href="review.php" class="btn sikat-quick-btn"><i class="bi bi-clipboard2-check"></i> Review Internal</a>
-      <a href="pelaporan.php" class="btn sikat-quick-btn"><i class="bi bi-inbox"></i> Pelaporan</a>
-      <a href="risiko.php" class="btn sikat-quick-btn"><i class="bi bi-shield-exclamation"></i> Risiko</a>
-      <a href="self_assessment.php" class="btn sikat-quick-btn"><i class="bi bi-ui-checks-grid"></i> Self-Assessment</a>
-      <?php if ($can_manage_users): ?>
-        <a href="public_media.php" class="btn sikat-quick-btn"><i class="bi bi-images"></i> Kelola Media Publik</a>
-        <a href="public_contacts.php" class="btn sikat-quick-btn"><i class="bi bi-person-lines-fill"></i> Kelola Kontak Publik</a>
-      <?php endif; ?>
-    </div>
-  </div>
 </section>
 <div class="container">
   <div class="divider hero-divider"></div>
@@ -597,7 +584,7 @@ $insights = [
                 <tr><td colspan="6"><div class="empty-state">Belum ada laporan terbaru.<div class="hint">Laporan akan tampil setelah pelaporan diterima.</div></div></td></tr>
               <?php else: foreach($latest as $r): ?>
                 <tr>
-                  <td><a href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>" class="text-decoration-none"><?= e($r['kode']) ?></a></td>
+                  <td><a href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>" class="text-decoration-none"><?= e($r['kode']) ?></a></td>
                   <td><?= e($r['kategori']) ?></td>
                   <td>
                     <?php $st=$r['status']; $cls=dashboard_status_badge_class((string)$st); ?>
@@ -605,7 +592,7 @@ $insights = [
                   </td>
                   <td><?= e(dashboard_datetime_short($r['created_at'] ?? '')) ?></td>
                   <td><div class="summary-text"><?= nl2br(e($r['isi_short'] ?: 'Tidak ada ringkasan')) ?></div></td>
-                  <td><a href="pelaporan_detail.php?kode=<?= urlencode($r['kode']) ?>" class="detail-link">Lihat Detail</a></td>
+                  <td><a href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>" class="detail-link">Lihat Detail</a></td>
                 </tr>
               <?php endforeach; endif; ?>
             </tbody>

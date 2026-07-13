@@ -74,6 +74,9 @@ if (!function_exists('session_release')) {
 
 if (!function_exists('session_hardening_login_url')) {
     function session_hardening_login_url(): string {
+        if (function_exists('route_url')) {
+            return route_url('login');
+        }
         $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
         $script = trim($script, '/');
         if ($script === '') {

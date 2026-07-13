@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-if (empty($_SESSION['user'])) { header('Location: login.php?open=login'); exit; }
+if (empty($_SESSION['user'])) { header('Location: ' . route_url('login', ['open' => 'login'])); exit; }
 function e($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 $nama = $_SESSION['user']['nama'] ?? ($_SESSION['user']['username'] ?? 'Pengguna');
 ?>
@@ -19,7 +19,7 @@ $nama = $_SESSION['user']['nama'] ?? ($_SESSION['user']['username'] ?? 'Pengguna
     .btn{ display:inline-block; margin-top:16px; background:var(--brand); color:#fff; padding:10px 14px; border-radius:10px; text-decoration:none; font-weight:600; }
     .btn:hover{ background:#1b6e2c; }
   </style>
-  <link href="assets/css/ui_base.css" rel="stylesheet">
+  <link href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 </head>
 <body>
@@ -28,7 +28,7 @@ $nama = $_SESSION['user']['nama'] ?? ($_SESSION['user']['username'] ?? 'Pengguna
     <h1>Pengaturan</h1>
     <p class="muted">Halo, <?= e($nama) ?>. Halaman pengaturan sedang disiapkan.</p>
     <p>Coming soon.</p>
-    <a href="dashboard.php" class="btn">Kembali ke Dashboard</a>
+    <a href="<?= e(route_url('dashboard')) ?>" class="btn">Kembali ke Dashboard</a>
   </div>
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
 </body>

@@ -20,12 +20,17 @@ return [
         'aliases' => [
             'reviu anggaran',
             'Reviu Anggaran',
+            'Reviu RKA',
+            'Reviu RKA-K/L',
+            'Reviu RKA/RKAKL',
+            'Reviu RKAKL',
             'RKA',
+            'RKA-K/L',
             'RKAKL',
             'RKA/RKAKL',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_rkbmn' => [
@@ -36,8 +41,8 @@ return [
             'RKBMN',
             'Reviu RKBMN',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_pipk' => [
@@ -48,8 +53,8 @@ return [
             'PIPK',
             'Reviu PIPK',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_lhkpn_lhkasn' => [
@@ -59,11 +64,12 @@ return [
         'aliases' => [
             'Reviu LHKPN & LHKASN',
             'Reviu LHKPN dan LHKASN',
+            'Reviu LHKPN/LHKASN',
             'LHKPN',
             'LHKASN',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_iku_ikt' => [
@@ -74,11 +80,14 @@ return [
             'IKU',
             'IKT',
             'IKU-IKT',
+            'IKU/IKT',
             'Reviu IKU',
             'Reviu IKT',
+            'Reviu IKU-IKT',
+            'Reviu IKU/IKT',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_lkj' => [
@@ -88,10 +97,14 @@ return [
         'aliases' => [
             'Laporan Kinerja',
             'LKj',
+            'LKJ',
+            'LAKIP',
             'Reviu Laporan Kinerja',
+            'Reviu LKJ',
+            'Reviu LAKIP',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_pengembangan_pegawai' => [
@@ -101,9 +114,11 @@ return [
         'aliases' => [
             'Pengembangan Pegawai',
             'Reviu Pengembangan Pegawai',
+            'Reviu Pengembangan SDM',
+            'Pengembangan SDM',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_manajemen_risiko' => [
@@ -113,12 +128,14 @@ return [
         'aliases' => [
             'Reviu Manajemen Resiko',
             'Reviu Manajemen Risiko',
+            'Reviu Manrisk',
             'Manajemen Resiko',
             'Manajemen Risiko',
             'MANRISK',
+            'Manrisk',
         ],
-        'status' => 'registered',
-        'renderer' => 'legacy',
+        'status' => 'active',
+        'renderer' => 'dynamic',
     ],
 
     'chr_sop' => [
@@ -128,9 +145,11 @@ return [
         'aliases' => [
             'SOP',
             'Reviu SOP',
+            'Reviu Standar Operasional Prosedur',
             'Standar Operasional Prosedur',
+            'Reviu Standar Prosedur Operasional',
         ],
         'status' => 'registered',
-        'renderer' => 'legacy',
+        'renderer' => 'dynamic',
     ],
 ];

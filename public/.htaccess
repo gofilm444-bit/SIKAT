@@ -3,3 +3,39 @@ Options -Indexes
 <FilesMatch "^\.">
   Require all denied
 </FilesMatch>
+
+<FilesMatch "(?i)\.(sql|log|bak|zip|rar|7z|tar|gz|md)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^$ index.php [L]
+  RewriteRule ^login/?$ login.php [QSA,L]
+  RewriteRule ^logout/?$ logout.php [QSA,L]
+  RewriteRule ^dashboard/?$ dashboard.php [QSA,L]
+  RewriteRule ^review/?$ review.php [QSA,L]
+  RewriteRule ^review/jadwal/?$ review.php?tab=jadwal [QSA,L]
+  RewriteRule ^review/penugasan/?$ review.php?tab=asg [QSA,L]
+  RewriteRule ^review/dokumen/?$ review.php?tab=dok [QSA,L]
+  RewriteRule ^review/chr/([0-9]+)/?$ review.php?tab=chr&rid=$1 [QSA,L]
+  RewriteRule ^review/chr/?$ review.php?tab=chr [QSA,L]
+  RewriteRule ^review/laporan/?$ review.php?tab=laporan [QSA,L]
+  RewriteRule ^review/verifikasi/?$ review.php?tab=laporan [QSA,L]
+  RewriteRule ^review/master/?$ review.php?tab=master [QSA,L]
+  RewriteRule ^pelaporan/?$ pelaporan.php [QSA,L]
+  RewriteRule ^pelaporan/([^/]+)/?$ pelaporan_detail.php?kode=$1 [QSA,L,B]
+  RewriteRule ^pengguna/?$ pengguna.php [QSA,L]
+  RewriteRule ^kebijakan/?$ kebijakan.php [QSA,L]
+  RewriteRule ^risiko/?$ risiko.php [QSA,L]
+  RewriteRule ^self-assessment/?$ self_assessment.php [QSA,L]
+  RewriteRule ^settings/?$ settings.php [QSA,L]
+  RewriteRule ^public-media/?$ public_media.php [QSA,L]
+  RewriteRule ^public-contacts/?$ public_contacts.php [QSA,L]
+  RewriteRule ^mail-recipients/?$ mail_recipients.php [QSA,L]
+</IfModule>

@@ -11,7 +11,7 @@ if (in_array($env, ['local','dev','development'], true)) {
     ini_set('display_errors', 0);
 }
 require_once 'db/koneksi.php';
-if(!isset($_SESSION['user'])) header('Location: login.php');
+if(!isset($_SESSION['user'])) header('Location: ' . route_url('login'));
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log('[pengguna.php POST] ' . json_encode($_POST));
     csrf_validate($_POST['csrf'] ?? '');
@@ -53,14 +53,35 @@ function first_array_key(array $arr) {
     foreach ($arr as $key => $_) { return $key; }
     return null;
 }
+function pengguna_col_exists(mysqli $conn, string $column): bool {
+    $safe = $conn->real_escape_string($column);
+    $res = $conn->query("SHOW COLUMNS FROM pengguna LIKE '{$safe}'");
+    return $res && $res->num_rows > 0;
+}
+function pengguna_unit_options(mysqli $conn): array {
+    $rows = [];
+    $res = $conn->query("SELECT id, nama FROM unit_kerja WHERE aktif=1 ORDER BY nama ASC");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) { $rows[] = $row; }
+    }
+    return $rows;
+}
+function pengguna_valid_unit_id(array $units, int $unitId): bool {
+    if ($unitId < 1) { return true; }
+    foreach ($units as $unit) {
+        if ((int)($unit['id'] ?? 0) === $unitId) { return true; }
+    }
+    return false;
+}
 
 
 $can_manage_super = ($user['peran'] === 'super_admin');
 $available_roles = $ROLE_OPTIONS;
 if(!$can_manage_super) { unset($available_roles['super_admin']); }
 
+$unit_options = pengguna_unit_options($conn);
 $pengguna_error = '';
-$pengguna = query("SELECT * FROM pengguna ORDER BY id DESC");
+$pengguna = query("SELECT p.*, u.nama AS unit_nama FROM pengguna p LEFT JOIN unit_kerja u ON u.id=p.unit_id ORDER BY p.id DESC");
 if (!is_array($pengguna)) {
     $pengguna_error = mysqli_error($conn) ?: 'Data pengguna tidak dapat dimuat.';
     $pengguna = [];
@@ -94,6 +115,10 @@ $user_edit_mode = false;
 $user_edit_data = [
     'id' => '',
     'nama' => '',
+    'nip' => '',
+    'jabatan' => '',
+    'unit_id' => '',
+    'unit_nama' => '',
     'username' => '',
     'peran' => $peran_list[0] ?? first_array_key($available_roles),
     'status' => $status_user_list[0] ?? 'aktif',
@@ -117,7 +142,7 @@ if(isset($_GET['edit_user'])) {
     }
     if (!$can_manage_super && !empty($user_edit_data['id']) && ($user_edit_data['peran'] ?? '') === 'super_admin') {
         $_SESSION['flash'] = 'Anda tidak berwenang mengedit akun Super Admin.';
-        header('Location: pengguna.php'); exit;
+        header('Location: ' . route_url('pengguna')); exit;
     }
     if (!empty($user_edit_data)) {
         if (!isset($available_roles[$user_edit_data['peran']])) {
@@ -139,7 +164,15 @@ $user_filtered = array_filter($pengguna, function($item) use ($user_search, $use
     $match = true;
     if ($user_search) {
         $nama = strtolower((string)($item['nama'] ?? ''));
-        $match = $match && (strpos($nama, $user_search) !== false);
+        $nip = strtolower((string)($item['nip'] ?? ''));
+        $jabatan = strtolower((string)($item['jabatan'] ?? ''));
+        $unitNama = strtolower((string)($item['unit_nama'] ?? ''));
+        $match = $match && (
+            strpos($nama, $user_search) !== false
+            || strpos($nip, $user_search) !== false
+            || strpos($jabatan, $user_search) !== false
+            || strpos($unitNama, $user_search) !== false
+        );
     }
     if ($user_peran !== 'all') {
         $match = $match && (($item['peran'] ?? null) === $user_peran);
@@ -159,11 +192,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $isEdit = isset($_POST['edit_user']) || $hasId;
 
     if ($isAdd) {
-        $nama = mysqli_real_escape_string($conn, trim($_POST['nama_user']));
-        $username = mysqli_real_escape_string($conn, trim($_POST['username_user']));
-        $password = mysqli_real_escape_string($conn, trim($_POST['password_user']));
-        $peran = mysqli_real_escape_string($conn, trim($_POST['peran_user']));
-        $status = mysqli_real_escape_string($conn, trim($_POST['status_user']));
+        $nama = trim((string)($_POST['nama_user'] ?? ''));
+        $nip = trim((string)($_POST['nip_user'] ?? ''));
+        $jabatan = trim((string)($_POST['jabatan_user'] ?? ''));
+        $unit_id = (int)($_POST['unit_id_user'] ?? 0);
+        $username = trim((string)($_POST['username_user'] ?? ''));
+        $password = trim((string)($_POST['password_user'] ?? ''));
+        $peran = trim((string)($_POST['peran_user'] ?? ''));
+        $status = trim((string)($_POST['status_user'] ?? ''));
         $akses_dashboard = isset($_POST['akses_dashboard']) ? 1 : 0;
         $akses_pelaporan = isset($_POST['akses_pelaporan']) ? 1 : 0;
         $akses_review    = isset($_POST['akses_review']) ? 1 : 0;
@@ -175,12 +211,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash'] = 'Peran tidak dikenali.';
         } elseif(!$can_manage_super && $peran==='super_admin') {
             $_SESSION['flash'] = 'Anda tidak berwenang menambah Super Admin.';
+        } elseif(!pengguna_valid_unit_id($unit_options, $unit_id)) {
+            $_SESSION['flash'] = 'Unit kerja tidak valid.';
         } else {
             $hash = password_hash($password, PASSWORD_DEFAULT);
             $ok = false;
-                if($stmt = $conn->prepare("INSERT INTO pengguna (nama, username, password, password_hash, peran, status, akses_dashboard, akses_pelaporan, akses_review) VALUES (?,?,?,?,?,?,?,?,?)")){
+                if($stmt = $conn->prepare("INSERT INTO pengguna (nama, nip, jabatan, unit_id, username, password, password_hash, peran, status, akses_dashboard, akses_pelaporan, akses_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")){
                 $empty = '';
-                $stmt->bind_param("ssssiiisi", $nama, $username, $peran, $status, $akses_dashboard, $akses_pelaporan, $akses_review, $hash, $id);
+                $unitParam = $unit_id > 0 ? $unit_id : null;
+                $stmt->bind_param("sssisssssiii", $nama, $nip, $jabatan, $unitParam, $username, $empty, $hash, $peran, $status, $akses_dashboard, $akses_pelaporan, $akses_review);
                 $ok = $stmt->execute();
                 if ($ok) {
                     $_SESSION['flash'] = 'Pengguna berhasil ditambah.';
@@ -195,22 +234,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $newId = (int)$conn->insert_id;
                 audit_log($conn, 'create', 'pengguna', $newId, [
                     'nama' => $nama,
+                    'nip' => $nip,
+                    'jabatan' => $jabatan,
+                    'unit_id' => $unit_id > 0 ? $unit_id : null,
                     'username' => $username,
                     'peran' => $peran,
                     'status' => $status,
                 ]);
             }
         }
-        header('Location: pengguna.php'); exit;
+        header('Location: ' . route_url('pengguna')); exit;
     }
 
     if ($isEdit) {
         $id = intval($_POST['id_user']);
-        $nama = mysqli_real_escape_string($conn, trim($_POST['nama_user']));
-        $username = mysqli_real_escape_string($conn, trim($_POST['username_user']));
-        $password = mysqli_real_escape_string($conn, trim($_POST['password_user']));
-        $peran = mysqli_real_escape_string($conn, trim($_POST['peran_user']));
-        $status = mysqli_real_escape_string($conn, trim($_POST['status_user']));
+        $nama = trim((string)($_POST['nama_user'] ?? ''));
+        $nip = trim((string)($_POST['nip_user'] ?? ''));
+        $jabatan = trim((string)($_POST['jabatan_user'] ?? ''));
+        $unit_id = (int)($_POST['unit_id_user'] ?? 0);
+        $username = trim((string)($_POST['username_user'] ?? ''));
+        $password = trim((string)($_POST['password_user'] ?? ''));
+        $peran = trim((string)($_POST['peran_user'] ?? ''));
+        $status = trim((string)($_POST['status_user'] ?? ''));
         $akses_dashboard = isset($_POST['akses_dashboard']) ? 1 : 0;
         $akses_pelaporan = isset($_POST['akses_pelaporan']) ? 1 : 0;
         $akses_review    = isset($_POST['akses_review']) ? 1 : 0;
@@ -232,19 +277,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash'] = 'Anda tidak berwenang mengubah data Super Admin.';
         } elseif(!isset($available_roles[$peran])) {
             $_SESSION['flash'] = 'Peran tidak dikenali.';
+        } elseif(!pengguna_valid_unit_id($unit_options, $unit_id)) {
+            $_SESSION['flash'] = 'Unit kerja tidak valid.';
         } else {
             $ok = false;
+        $unitParam = $unit_id > 0 ? $unit_id : null;
         if ($passwordChanged) {
          $hash = password_hash($password, PASSWORD_DEFAULT);
          $stmt = $conn->prepare(
         "UPDATE pengguna 
-         SET nama=?, username=?, peran=?, status=?, akses_dashboard=?, akses_pelaporan=?, akses_review=?, password='', password_hash=? 
+         SET nama=?, nip=?, jabatan=?, unit_id=?, username=?, peran=?, status=?, akses_dashboard=?, akses_pelaporan=?, akses_review=?, password='', password_hash=?
          WHERE id=?"
     );
     if ($stmt) {
         $stmt->bind_param(
-            "ssssiiisi",
+            "sssisssiiisi",
             $nama,
+            $nip,
+            $jabatan,
+            $unitParam,
             $username,
             $peran,
             $status,
@@ -270,15 +321,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // UPDATE TANPA GANTI PASSWORD  (± baris 271)
 $stmt = $conn->prepare(
     "UPDATE pengguna 
-     SET nama=?, username=?, peran=?, status=?, 
+     SET nama=?, nip=?, jabatan=?, unit_id=?, username=?, peran=?, status=?,
          akses_dashboard=?, akses_pelaporan=?, akses_review=? 
      WHERE id=?"
 );
 
 if ($stmt) {
     $stmt->bind_param(
-        "sssssiii",
+        "sssisssiiii",
         $nama,
+        $nip,
+        $jabatan,
+        $unitParam,
         $username,
         $peran,
         $status,
@@ -302,6 +356,9 @@ if ($stmt) {
             if ($ok) {
                 audit_log($conn, 'update', 'pengguna', $id, [
                     'nama' => $nama,
+                    'nip' => $nip,
+                    'jabatan' => $jabatan,
+                    'unit_id' => $unit_id > 0 ? $unit_id : null,
                     'username' => $username,
                     'peran' => $peran,
                     'status' => $status,
@@ -309,7 +366,7 @@ if ($stmt) {
                 ]);
             }
         }
-        header('Location: pengguna.php'); exit;
+        header('Location: ' . route_url('pengguna')); exit;
     }
 
 if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
@@ -341,7 +398,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
             ]);
         }
     }
-    header('Location: pengguna.php'); exit;
+    header('Location: ' . route_url('pengguna')); exit;
 }
 
 }
@@ -352,8 +409,8 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
 <head>
     <title>Manajemen Pengguna</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="assets/css/ui_base.css">
-    <link rel="stylesheet" href="assets/css/password_toggle.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars(asset_url('assets/css/ui_base.css'), ENT_QUOTES, 'UTF-8') ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars(asset_url('assets/css/password_toggle.css'), ENT_QUOTES, 'UTF-8') ?>">
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
 </head>
 <body>
@@ -371,7 +428,18 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
         <?= csrf_field() ?>
         <input type="hidden" name="id_user" value="<?= htmlspecialchars((string)($user_edit_data['id'] ?? '')) ?>">
         <label class="sr-only" for="nama_user">Nama Pengguna</label>
-        <input id="nama_user" type="text" name="nama_user" placeholder="Nama Pengguna" value="<?= htmlspecialchars((string)($user_edit_data['nama'] ?? '')) ?>" required>
+        <input id="nama_user" type="text" name="nama_user" placeholder="Nama" value="<?= htmlspecialchars((string)($user_edit_data['nama'] ?? '')) ?>" required>
+        <label class="sr-only" for="nip_user">NIP</label>
+        <input id="nip_user" type="text" name="nip_user" placeholder="NIP" value="<?= htmlspecialchars((string)($user_edit_data['nip'] ?? '')) ?>">
+        <label class="sr-only" for="jabatan_user">Jabatan</label>
+        <input id="jabatan_user" type="text" name="jabatan_user" placeholder="Jabatan resmi" value="<?= htmlspecialchars((string)($user_edit_data['jabatan'] ?? '')) ?>">
+        <label class="sr-only" for="unit_id_user">Unit Kerja</label>
+        <select id="unit_id_user" name="unit_id_user">
+            <option value="">Pilih Unit Kerja</option>
+            <?php foreach($unit_options as $unit): ?>
+                <option value="<?= (int)$unit['id'] ?>" <?= (int)($user_edit_data['unit_id'] ?? 0) === (int)$unit['id'] ? 'selected' : '' ?>><?= htmlspecialchars((string)$unit['nama']) ?></option>
+            <?php endforeach; ?>
+        </select>
         <label class="sr-only" for="username_user">Username</label>
         <input id="username_user" type="text" name="username_user" placeholder="Username" value="<?= htmlspecialchars((string)($user_edit_data['username'] ?? '')) ?>" required>
         <label class="sr-only" for="password_user">Password</label>
@@ -418,7 +486,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
 <hr>
 <form method="get" style="margin-bottom:16px;">
     <label class="sr-only" for="user_search">Cari nama pengguna</label>
-    <input id="user_search" type="text" name="user_search" placeholder="Cari nama pengguna..." value="<?= htmlspecialchars($user_search) ?>">
+    <input id="user_search" type="text" name="user_search" placeholder="Cari nama, NIP, jabatan, unit..." value="<?= htmlspecialchars($user_search) ?>">
     <label class="sr-only" for="user_peran">Filter Peran</label>
     <select id="user_peran" name="user_peran">
         <option value="all">Semua Peran</option>
@@ -439,19 +507,25 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
 <table border="1" cellpadding="8" cellspacing="0">
     <tr style="background:#f0f0f0;">
         <th>ID</th>
-        <th>Nama Pengguna</th>
+        <th>Nama</th>
+        <th>NIP</th>
+        <th>Jabatan</th>
+        <th>Unit Kerja</th>
         <th>Username</th>
         <th>Peran</th>
         <th>Status</th>
         <th>Aksi</th>
     </tr>
     <?php if(count($user_filtered) === 0): ?>
-        <tr><td colspan="6"><div class="empty-state">Tidak ada data ditemukan.<div class="hint">Coba ubah filter/pencarian.</div></div></td></tr>
+        <tr><td colspan="9"><div class="empty-state">Tidak ada data ditemukan.<div class="hint">Coba ubah filter/pencarian.</div></div></td></tr>
     <?php else: ?>
         <?php foreach($user_filtered as $row): ?>
             <tr>
                 <td><?= (int)$row['id'] ?></td>
                 <td><?= htmlspecialchars((string)$row['nama']) ?></td>
+                <td><?= htmlspecialchars((string)($row['nip'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string)($row['jabatan'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string)($row['unit_nama'] ?? '')) ?></td>
                 <td><?= htmlspecialchars((string)$row['username']) ?></td>
                 <td><?= htmlspecialchars($available_roles[$row['peran']] ?? role_label($row['peran'],$ROLE_OPTIONS)) ?></td>
                 <td><?= htmlspecialchars((string)$row['status']) ?></td>
@@ -474,11 +548,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
     <?php endif; ?>
 </table>
 </div>
-  <script defer src="assets/js/password_toggle.js"></script>
+  <script defer src="<?= htmlspecialchars(asset_url('assets/js/password_toggle.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
 </body>
 </html>
-
-
-
-
