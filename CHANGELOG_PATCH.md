@@ -1,5 +1,89 @@
 # CHANGELOG_PATCH
 
+## 2026-08-03 08:21:59 - Tambahkan opsi lihat isi lengkap pelaporan
+
+### File Diubah
+
+* pelaporan.php
+* includes/report_detail_modal.php
+* assets/js/report_detail_modal.js
+* public/assets/js/report_detail_modal.js
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan tombol Lihat Isi Lengkap pada kolom isi ringkas tabel pelaporan.
+* Menggunakan modal detail laporan yang sudah ada untuk membaca isi laporan penuh.
+* Menambahkan fokus modal ke panel Isi Laporan tanpa mengubah tombol Riwayat.
+
+### Dampak
+
+* Pengguna dapat membaca isi pengaduan lengkap tanpa pindah halaman.
+* Tombol Riwayat tetap fokus ke bagian Riwayat Proses.
+* Tidak mengubah status, disposisi, monitoring tindak lanjut, dashboard, sidebar, atau database.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Tombol Lihat Isi Lengkap tampil di setiap baris pelaporan
+* [ ] Klik tombol membuka modal detail laporan
+* [ ] Modal fokus ke bagian Isi Laporan
+* [ ] Isi laporan panjang tampil utuh dan tidak meluber
+* [ ] Tombol Riwayat tetap fokus ke Riwayat Proses
+* [ ] Tombol aksi status tetap normal
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile rapi
+* [ ] Tidak ada fatal error
+
+## 2026-08-03 08:08:53 - Perbaikan popup detail laporan dan riwayat pengaduan
+
+### File Diubah
+
+* dashboard.php
+* pelaporan.php
+* report_detail.php
+* public/report_detail.php
+* includes/report_detail_modal.php
+* includes/url_helpers.php
+* assets/js/report_detail_modal.js
+* public/assets/js/report_detail_modal.js
+* assets/css/ui_base.css
+* public/assets/css/ui_base.css
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan modal reusable untuk detail laporan dan riwayat pengaduan.
+* Mengubah tombol Lihat Detail dashboard agar membuka popup tanpa pindah halaman.
+* Mengubah tombol Riwayat dan tombol lampiran di halaman pelaporan agar membuka popup detail.
+* Menambahkan endpoint JSON aman untuk mengambil detail laporan, lampiran, riwayat, dan tindak lanjut.
+* Menambahkan JavaScript vanilla dan CSS modal responsif.
+
+### Dampak
+
+* Detail laporan dapat dibaca dari dashboard tanpa reload.
+* Riwayat pengaduan dapat dibuka dari halaman pelaporan.
+* Tidak mengubah alur status, disposisi, tindak lanjut, login, role, atau database.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Dashboard terbuka normal
+* [ ] Tombol Lihat Detail membuka modal
+* [ ] Tombol Riwayat membuka modal dan fokus ke riwayat
+* [ ] Isi laporan tampil lengkap dan aman
+* [ ] Lampiran tampil melalui endpoint download
+* [ ] Modal bisa ditutup dengan X, Tutup, backdrop, dan Escape
+* [ ] Halaman pelaporan tetap bisa menjalankan aksi status
+* [ ] Tidak ada fatal error
+* [ ] Tidak ada file sensitif ikut berubah
+
 ## 2026-06-25 13:05:00 - Rapikan posisi media carousel dan indikator slide
 
 ### File Diubah

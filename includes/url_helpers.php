@@ -47,6 +47,7 @@ if (!function_exists('endpoint_url')) {
         $allowed = [
             'attachment_download.php',
             'download.php',
+            'report_detail.php',
             'chr_export.php',
             'chr_export_pdf.php',
             'chr_sop_export.php',

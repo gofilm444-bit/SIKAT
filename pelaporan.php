@@ -2146,6 +2146,10 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <?php endif; ?>
 
+                  <div class="mt-2">
+                    <button type="button" class="btn btn-sm btn-link p-0 fw-semibold js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="content" aria-label="Lihat isi lengkap laporan <?= e((string)$r['kode']) ?>">Lihat Isi Lengkap</button>
+                  </div>
+
                 </td>
 
                 <td>
@@ -2154,7 +2158,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <?php if($cnt>0): ?>
 
-                    <a class="btn btn-sm btn-outline-success" href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>">Lihat (<?= $cnt ?>)</a>
+                    <button type="button" class="btn btn-sm btn-outline-success js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>">Lihat (<?= $cnt ?>)</button>
 
                   <?php else: ?>
 
@@ -2270,7 +2274,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <div class="d-flex flex-column gap-2">
 
-                    <a class="btn btn-sm btn-outline-secondary" href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>"><i class="bi bi-clock-history me-1"></i>Riwayat</a>
+                    <button type="button" class="btn btn-sm btn-outline-secondary js-report-history" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="history"><i class="bi bi-clock-history me-1"></i>Riwayat</button>
 
                     <?php if(!empty($r['actions'])): ?>
 
@@ -2393,12 +2397,14 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 </main>
 
 
+<?php include __DIR__ . '/includes/report_detail_modal.php'; ?>
 
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
 
 
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="<?= e(asset_url('assets/js/report_detail_modal.js')) ?>"></script>
 
 </body>
 

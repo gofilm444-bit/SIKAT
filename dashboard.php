@@ -233,7 +233,7 @@ if ($qc=$conn->query("SELECT kategori, COUNT(*) c FROM pelaporan GROUP BY katego
 }
 
 $latest=[];
-if ($ql=$conn->query("SELECT kode,kategori,status,LEFT(isi,120) isi_short, created_at FROM pelaporan ORDER BY created_at DESC LIMIT 5")) {
+if ($ql=$conn->query("SELECT id,kode,kategori,status,LEFT(isi,120) isi_short, created_at FROM pelaporan ORDER BY created_at DESC LIMIT 5")) {
   $latest=$ql->fetch_all(MYSQLI_ASSOC);
 }
 
@@ -584,7 +584,7 @@ $insights = [
                 <tr><td colspan="6"><div class="empty-state">Belum ada laporan terbaru.<div class="hint">Laporan akan tampil setelah pelaporan diterima.</div></div></td></tr>
               <?php else: foreach($latest as $r): ?>
                 <tr>
-                  <td><a href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>" class="text-decoration-none"><?= e($r['kode']) ?></a></td>
+                  <td><button type="button" class="btn btn-link p-0 text-decoration-none js-report-detail" data-report-id="<?= (int)($r['id'] ?? 0) ?>" data-report-code="<?= e((string)$r['kode']) ?>"><?= e($r['kode']) ?></button></td>
                   <td><?= e($r['kategori']) ?></td>
                   <td>
                     <?php $st=$r['status']; $cls=dashboard_status_badge_class((string)$st); ?>
@@ -592,7 +592,7 @@ $insights = [
                   </td>
                   <td><?= e(dashboard_datetime_short($r['created_at'] ?? '')) ?></td>
                   <td><div class="summary-text"><?= nl2br(e($r['isi_short'] ?: 'Tidak ada ringkasan')) ?></div></td>
-                  <td><a href="<?= e(route_url('pelaporan/' . rawurlencode((string)$r['kode']))) ?>" class="detail-link">Lihat Detail</a></td>
+                  <td><button type="button" class="btn btn-link p-0 detail-link js-report-detail" data-report-id="<?= (int)($r['id'] ?? 0) ?>" data-report-code="<?= e((string)$r['kode']) ?>">Lihat Detail</button></td>
                 </tr>
               <?php endforeach; endif; ?>
             </tbody>
@@ -604,8 +604,11 @@ $insights = [
   </div>
 </main>
 
+<?php include __DIR__ . '/includes/report_detail_modal.php'; ?>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="<?= e(asset_url('assets/js/report_detail_modal.js')) ?>"></script>
 <script>
 (function() {
   const wrap = document.getElementById('profileMenuWrap');
