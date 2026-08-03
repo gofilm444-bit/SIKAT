@@ -240,10 +240,18 @@ if (!function_exists('chr_template_normalize_name')) {
 
 if (!function_exists('chr_template_resolve_by_review')) {
   function chr_template_resolve_by_review(?array $rev): string {
+    $reviewTemplateCode = trim((string)($rev['template_code'] ?? ($rev['review_template_code'] ?? '')));
+    if ($reviewTemplateCode !== '' && chr_template_get($reviewTemplateCode)) {
+      return $reviewTemplateCode;
+    }
+    $jenisTemplateCode = trim((string)($rev['jenis_template_code'] ?? ''));
+    if ($jenisTemplateCode !== '' && chr_template_get($jenisTemplateCode)) {
+      return $jenisTemplateCode;
+    }
     $jenis = trim((string)($rev['jenis_nama'] ?? ''));
-    if ($jenis === '') { return 'chr_legacy_laporan_keuangan'; }
+    if ($jenis === '') { return ''; }
     $target = chr_template_normalize_name($jenis);
-    if ($target === '') { return 'chr_legacy_laporan_keuangan'; }
+    if ($target === '') { return ''; }
 
     foreach (chr_template_registry() as $code => $template) {
       $aliases = $template['aliases'] ?? [];
@@ -255,7 +263,7 @@ if (!function_exists('chr_template_resolve_by_review')) {
       }
     }
 
-    return 'chr_legacy_laporan_keuangan';
+    return '';
   }
 }
 
@@ -1593,8 +1601,26 @@ if (!function_exists('chr_form_fetch_stored_row')) {
 if (!function_exists('chr_form_review_meta')) {
   function chr_form_review_meta(mysqli $conn, int $reviuId): ?array {
     if ($reviuId < 1) { return null; }
+    $reviewColumns = ['r.id', 'r.jenis_id', 'j.nama AS jenis_nama'];
+    if (function_exists('review_table_column_exists')) {
+      if (review_table_column_exists($conn, 'reviu', 'template_code')) {
+        $reviewColumns[] = 'r.template_code';
+      }
+      if (review_table_column_exists($conn, 'jenis_reviu', 'template_code')) {
+        $reviewColumns[] = 'j.template_code AS jenis_template_code';
+      }
+    } else {
+      if ($rs = $conn->query("SHOW COLUMNS FROM `reviu` LIKE 'template_code'")) {
+        if ($rs->num_rows > 0) { $reviewColumns[] = 'r.template_code'; }
+        $rs->free();
+      }
+      if ($rs = $conn->query("SHOW COLUMNS FROM `jenis_reviu` LIKE 'template_code'")) {
+        if ($rs->num_rows > 0) { $reviewColumns[] = 'j.template_code AS jenis_template_code'; }
+        $rs->free();
+      }
+    }
     $stmt = $conn->prepare(
-      "SELECT r.id, r.jenis_id, j.nama AS jenis_nama
+      "SELECT ".implode(', ', $reviewColumns)."
        FROM reviu r
        LEFT JOIN jenis_reviu j ON j.id = r.jenis_id
        WHERE r.id=? LIMIT 1"

@@ -10,12 +10,12 @@ if (!function_exists('pelaporan_status_catalog')) {
             'Masuk' => [
                 'label'       => 'Pengaduan Masuk',
                 'badge_class' => 'bg-secondary',
-                'description' => 'Laporan baru diterima oleh admin dan menunggu diteruskan ke Kepala SKI.'
+                'description' => 'Laporan baru diterima oleh admin dan menunggu diteruskan ke Ka SKI.'
             ],
             'Verifikasi SKI' => [
-                'label'       => 'Verifikasi Kepala SKI',
+                'label'       => 'Verifikasi Ka SKI',
                 'badge_class' => 'bg-info text-dark',
-                'description' => 'Kepala SKI menilai kesesuaian laporan sebelum diproses lebih lanjut.'
+                'description' => 'Ka SKI menilai kesesuaian laporan sebelum diproses lebih lanjut.'
             ],
             'Perlu Rekap Admin' => [
                 'label'       => 'Perlu Rekap Admin',
@@ -149,7 +149,7 @@ if (!function_exists('pelaporan_status_catalog')) {
         return [
             'admin' => [
                 'Masuk' => [
-                    ['to' => 'Verifikasi SKI', 'label' => 'Teruskan ke Kepala SKI', 'note_required' => false, 'note_placeholder' => 'Catatan untuk Kepala SKI (opsional)'],
+                    ['to' => 'Verifikasi SKI', 'label' => 'Teruskan ke Ka SKI', 'note_required' => false, 'note_placeholder' => 'Catatan untuk Ka SKI (opsional)'],
                 ],
                 'Perlu Rekap Admin' => [
                     [

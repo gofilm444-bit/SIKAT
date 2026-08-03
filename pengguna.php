@@ -25,7 +25,7 @@ if(!in_array($user['peran'], ['super_admin','admin'], true)) {
 $ROLE_OPTIONS = [
     'super_admin'          => 'Super Admin (IT)',
     'admin'                => 'Admin SKI',
-    'auditor_ka'           => 'Auditor - Kepala SKI',
+    'auditor_ka'           => 'Auditor - Ka SKI',
     'auditor_staff'        => 'Auditor - Staf SKI',
     'auditor'              => 'Auditor',
     'auditee_direktur'     => 'Auditee - Direktur',

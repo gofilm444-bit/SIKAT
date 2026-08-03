@@ -96,18 +96,6 @@ $currentPath = sikat_sidebar_current_path();
 $currentScript = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
 $currentTab = (string)($_GET['tab'] ?? '');
 
-$reviewItems = [];
-if ($canReview) {
-    $reviewItems = [
-        ['label' => 'Jadwal', 'href' => review_url('jadwal'), 'match' => ['/review/jadwal'], 'script' => 'review.php', 'tab' => 'jadwal'],
-        ['label' => 'Penugasan', 'href' => review_url('penugasan'), 'match' => ['/review/penugasan'], 'script' => 'review.php', 'tab' => 'asg'],
-        ['label' => 'Dokumen', 'href' => review_url('dokumen'), 'match' => ['/review/dokumen'], 'script' => 'review.php', 'tab' => 'dok'],
-        ['label' => 'CHR & Rekomendasi', 'href' => review_url('chr'), 'match' => ['/review/chr'], 'script' => 'review.php', 'tab' => 'chr'],
-        ['label' => 'Laporan & Verifikasi', 'href' => review_url('laporan'), 'match' => ['/review/laporan', '/review/verifikasi'], 'script' => 'review.php', 'tab' => 'laporan'],
-        ['label' => 'Master', 'href' => review_url('master'), 'match' => ['/review/master'], 'script' => 'review.php', 'tab' => 'master'],
-    ];
-}
-
 $sections = [
     [
         'title' => 'Utama',
@@ -118,7 +106,7 @@ $sections = [
     [
         'title' => 'Kepatuhan Internal',
         'items' => array_values(array_filter([
-            $canReview ? ['label' => 'Review Internal', 'icon' => 'review', 'href' => route_url('review'), 'match' => ['/review'], 'script' => 'review.php', 'children' => $reviewItems] : null,
+            $canReview ? ['label' => 'Review Internal', 'icon' => 'review', 'href' => review_url('jadwal'), 'match' => ['/review'], 'script' => 'review.php'] : null,
             $canPelaporan ? ['label' => 'Pelaporan', 'icon' => 'report', 'href' => route_url('pelaporan'), 'match' => ['/pelaporan'], 'script' => 'pelaporan.php'] : null,
             $canKepatuhanMaster ? ['label' => 'Kebijakan', 'icon' => 'policy', 'href' => route_url('kebijakan'), 'match' => ['/kebijakan'], 'script' => 'kebijakan.php'] : null,
             $canRisk ? ['label' => 'Risiko', 'icon' => 'risk', 'href' => route_url('risiko'), 'match' => ['/risiko'], 'script' => 'risiko.php'] : null,

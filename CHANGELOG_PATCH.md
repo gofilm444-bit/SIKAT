@@ -1,5 +1,230 @@
 # CHANGELOG_PATCH
 
+## 2026-08-03 10:09:25 - Sederhanakan sidebar Review Internal
+
+### File Diubah
+
+* includes/sidebar.php
+* review.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menghapus submenu Review Internal dari sidebar.
+* Menjadikan menu Review Internal sebagai link langsung ke Jadwal Reviu.
+* Mempertahankan tab Review Internal di halaman review.php.
+* Menambahkan tombol Buka Daftar Jadwal pada tab detail yang belum memiliki reviu terpilih.
+
+### Dampak
+
+* Sidebar lebih ringkas dan tidak menduplikasi tab Review Internal.
+* Jadwal menjadi titik awal pemilihan reviu sebelum membuka Penugasan, Dokumen, CHR, atau Laporan.
+* Parent Review Internal tetap aktif selama pengguna berada di modul review.
+* Tidak ada perubahan database, hak akses, workflow, template CHR, atau URL produksi.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Sidebar hanya menampilkan menu Review Internal tanpa submenu
+* [ ] Klik Review Internal membuka Jadwal
+* [ ] Tab Review Internal tetap tampil di halaman review.php
+* [ ] Parent Review Internal aktif pada tab Jadwal, Penugasan, Dokumen, CHR, Laporan, dan Master
+* [ ] Tab detail tanpa rid menampilkan tombol Buka Daftar Jadwal
+* [ ] Klik kode reviu dari Jadwal membawa rid ke tab detail
+* [ ] Pindah tab setelah memilih reviu mempertahankan rid
+* [ ] Master tetap sesuai hak akses
+* [ ] Tidak ada fatal error
+## 2026-08-03 10:03:58 - Tambahkan catatan status jadwal tanpa mengubah tahap
+
+### File Diubah
+
+* review.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menambahkan menu Atur Catatan Status pada dropdown aksi Jadwal Reviu.
+* Membuat handler khusus reviu_note_update yang hanya memperbarui kolom catatan.
+* Menambahkan modal catatan status dengan status utama read-only.
+* Membatasi tampilan catatan pada kolom Status agar tabel tetap rapi.
+
+### Dampak
+
+* Catatan kondisi kegiatan dapat diisi tanpa mengubah status utama.
+* Majukan Tahap tetap menjadi pengendali status/tahap kegiatan.
+* Atur Deadline dan Hapus tetap berjalan seperti sebelumnya.
+* Tidak ada perubahan database, workflow CHR, template, hak akses, atau sidebar.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Atur Catatan Status tampil pada dropdown aksi Jadwal
+* [ ] Modal menampilkan kode, nama kegiatan, dan status utama read-only
+* [ ] Simpan Catatan hanya mengirim id dan catatan
+* [ ] Catatan tampil di bawah badge status
+* [ ] Mengosongkan catatan menyembunyikan catatan dari tabel
+* [ ] Majukan Tahap tidak berubah
+* [ ] Atur Deadline tetap berfungsi
+* [ ] Hapus tetap berfungsi
+* [ ] Tidak ada fatal error
+## 2026-08-03 09:53:39 - Hapus Atur Status dari aksi jadwal reviu
+
+### File Diubah
+
+* review.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menghapus menu Atur Status dari dropdown aksi Jadwal Reviu.
+* Menghapus modal Atur Status yang hanya dipakai oleh menu tersebut.
+* Menghapus JavaScript khusus pembuka dan pengisi modal Atur Status.
+* Mempertahankan Majukan Tahap sebagai pengendali status kegiatan.
+
+### Dampak
+
+* Pengguna tidak lagi melihat dua jalur pengubahan status pada Jadwal Reviu.
+* Atur Deadline dan Hapus tetap tersedia pada menu tiga titik.
+* Tidak ada perubahan database, workflow CHR, template, hak akses, atau sidebar.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Menu Atur Status tidak tampil pada dropdown aksi Jadwal
+* [ ] Modal Atur Status tidak dirender
+* [ ] Tombol Majukan Tahap tetap tampil sesuai status dan role
+* [ ] Majukan Tahap tetap mengirim action reviu_step
+* [ ] Atur Deadline tetap membuka modal
+* [ ] Hapus tetap membuka konfirmasi
+* [ ] Tidak ada error JavaScript
+* [ ] Tidak ada fatal error
+## 2026-08-03 09:38:38 - Perbaiki fungsi menu aksi jadwal reviu
+
+### File Diubah
+
+* review.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Memindahkan modal Atur Status, Atur Deadline, dan Hapus agar tersedia pada tab Jadwal.
+* Menambahkan nama kegiatan pada data tombol aksi untuk ditampilkan di modal.
+* Memperkuat JavaScript pengisi modal agar field POST terisi lewat selector eksplisit.
+* Mempertahankan handler lama untuk status, deadline, dan hapus.
+
+### Dampak
+
+* Menu tiga titik pada tabel Jadwal Reviu kembali berfungsi.
+* Atur Status, Atur Deadline, dan Hapus tetap memakai CSRF dan validasi server lama.
+* Tidak ada perubahan database, layout besar, workflow, CHR, sidebar, atau URL.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Atur Status membuka modal pada tab Jadwal
+* [ ] Modal status menampilkan kode, nama kegiatan, status saat ini, dan catatan
+* [ ] Simpan Status mengirim action reviu_status_update
+* [ ] Atur Deadline membuka modal pada tab Jadwal
+* [ ] Modal deadline menampilkan kode, nama kegiatan, deadline, dan info deadline
+* [ ] Simpan Deadline mengirim action reviu_deadline_update
+* [ ] Hapus membuka modal konfirmasi
+* [ ] Konfirmasi hapus mengirim action reviu_delete
+* [ ] Tombol Batal tidak mengirim form
+* [ ] Tidak ada fatal error
+## 2026-08-03 09:22:33 - Sederhanakan kolom aksi jadwal reviu
+
+### File Diubah
+
+* review.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Merapikan kolom Aksi pada tabel Jadwal Reviu.
+* Menampilkan aksi utama Buka, Majukan Tahap, dan menu Lainnya.
+* Memindahkan Atur Status, Atur Deadline, dan Hapus ke dropdown/modal.
+* Mempertahankan action POST, CSRF, dan handler backend yang sudah ada.
+
+### Dampak
+
+* Tabel Jadwal Reviu lebih ringkas dan mudah dibaca.
+* Status, deadline, early warning, dan catatan tetap terlihat.
+* Tidak ada perubahan database, workflow, hak akses, CHR, export, atau clean URL.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Tombol Buka membuka jadwal/reviu lama
+* [ ] Tombol Majukan Tahap tetap mengirim action lama
+* [ ] Menu Lainnya membuka opsi Atur Status, Atur Deadline, dan Hapus sesuai hak akses
+* [ ] Modal Atur Status menyimpan status dan catatan
+* [ ] Modal Atur Deadline menyimpan tanggal deadline
+* [ ] Modal Hapus menampilkan konfirmasi sebelum submit
+* [ ] CSRF tetap ada pada semua form aksi
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile rapi
+* [ ] Tidak ada fatal error
+## 2026-08-03 09:07:06 - Pisahkan nama kegiatan dan template CHR jadwal reviu
+
+### File Diubah
+
+* review.php
+* chr_helpers.php
+* db/schema_bootstrap.php
+* deploy/migrations/20260803_090111_review_template_mapping.sql
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Memisahkan Nama/Judul Kegiatan Reviu dari Jenis Reviu pada form Buat Jadwal.
+* Mengubah form Buat Jadwal Reviu menjadi modal mengambang.
+* Menyimpan template_code dan template_version berdasarkan jenis/template yang dipilih.
+* Menambahkan pemetaan template pada Master Jenis Reviu.
+* Memperbaiki resolver CHR agar mengutamakan template yang tersimpan pada jadwal.
+
+### Dampak
+
+* Jadwal baru tidak lagi memakai nama jenis sebagai judul kegiatan.
+* CHR baru memakai template yang dipilih pada jadwal, bukan fallback default.
+* Data lama tetap dipertahankan dan dapat dipetakan dari tab Master.
+* Tidak mengubah workflow tanda tangan, data_json CHR, role, sidebar, atau database secara langsung.
+
+### Kebutuhan Database
+
+Perlu menjalankan migration:
+
+deploy/migrations/20260803_090111_review_template_mapping.sql
+
+### Checklist Pengujian
+
+* [ ] Modal Buat Jadwal Reviu terbuka
+* [ ] Nama kegiatan wajib diisi
+* [ ] Jenis reviu wajib dipilih
+* [ ] Unit kerja wajib dipilih
+* [ ] Tanggal mulai tidak melebihi tanggal selesai
+* [ ] Jenis tanpa template ditolak saat simpan
+* [ ] Jadwal baru menyimpan template_code dan template_version
+* [ ] CHR memakai template sesuai jadwal
+* [ ] Master Jenis Reviu menampilkan status pemetaan
+* [ ] Pemetaan template jenis lama dapat disimpan
+* [ ] Data lama tetap tampil
+* [ ] Tidak ada fatal error
+
 ## 2026-08-03 08:21:59 - Tambahkan opsi lihat isi lengkap pelaporan
 
 ### File Diubah
@@ -3321,3 +3546,128 @@ Tidak ada perubahan database
 * [ ] Tombol sidebar tetap terlihat jelas
 * [ ] Avatar tetap kontras
 * [ ] Tidak ada perubahan layout menu
+
+## 2026-08-03 10:29:41 - Perapian tabel pelaporan
+
+### File Diubah
+
+* pelaporan.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menggabungkan kolom kategori, isi ringkas, dan lampiran menjadi tampilan ringkas dalam satu kolom.
+* Merapikan kolom aksi dengan tombol Detail, aksi utama, dropdown Riwayat/aksi tambahan, dan modal konfirmasi hapus.
+* Memindahkan input catatan aksi status ke modal bersama agar tabel tidak terlalu padat.
+* Mempertahankan tombol Lihat Isi Lengkap agar tetap membuka modal detail pada bagian isi laporan.
+
+### Dampak
+
+* Tabel pelaporan lebih ringkas dan mudah dipindai.
+* Fungsi status, catatan Kepala SKI/Direktur, tindak lanjut, riwayat, detail, dan hapus tetap memakai handler lama.
+* Tidak mengubah workflow, database, hak akses, dashboard, Review, sidebar, ekspor, atau fungsi form publik.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Halaman Pelaporan terbuka normal
+* [ ] Tabel tampil dengan kolom Kode, Kategori & Isi, Dibuat, Status, Early Warning, Status TL, dan Aksi
+* [ ] Lihat Detail membuka popup detail laporan
+* [ ] Lihat Isi Lengkap membuka popup detail dan fokus ke isi laporan
+* [ ] Riwayat membuka popup detail dan fokus ke riwayat
+* [ ] Teruskan ke Kepala SKI membuka modal catatan dan submit tetap memproses status lama
+* [ ] Aksi lain di dropdown tetap memproses status lama
+* [ ] Hapus Laporan membuka modal konfirmasi sebelum menghapus
+* [ ] Status TL tetap bisa diperbarui oleh Direktur
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile tetap bisa discroll tanpa layout pecah
+* [ ] Tidak ada fatal error
+* [ ] Tidak ada perubahan database
+## 2026-08-03 10:32:39 - Singkatkan label Kepala SKI
+
+### File Diubah
+
+* pelaporan.php
+* pelaporan_helpers.php
+* login.php
+* pengguna.php
+* review.php
+* laporan_export.php
+* verifikasi_export.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Mengubah label tampilan “Kepala SKI” menjadi “Ka SKI” agar lebih singkat.
+* Mempertahankan key role/backend seperti kepala_ski tanpa perubahan.
+
+### Dampak
+
+* Label role, status, form, dan export terkait SKI tampil lebih ringkas.
+* Tidak mengubah fungsi login, role, workflow, database, atau validasi.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Label Ka SKI tampil pada halaman terkait
+* [ ] Role kepala_ski tetap berfungsi
+* [ ] Pelaporan tetap normal
+* [ ] Review tetap normal
+* [ ] Export laporan/verifikasi tetap normal
+* [ ] Tidak ada fatal error
+* [ ] Tidak ada perubahan database
+## 2026-08-03 10:46:09 - Ringkas baris pelaporan dan preview lampiran
+
+### File Diubah
+
+* pelaporan.php
+* includes/report_detail_modal.php
+* assets/js/report_detail_modal.js
+* public/assets/js/report_detail_modal.js
+* assets/css/ui_base.css
+* public/assets/css/ui_base.css
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Membatasi ringkasan isi laporan pada tabel menjadi 2 baris dengan line-clamp dan ellipsis.
+* Membatasi catatan tindak lanjut pada tabel menjadi 2 baris dan menambahkan modal baca-saja untuk catatan lengkap.
+* Mengubah tombol lampiran pada tabel agar membuka modal detail pada bagian Lampiran.
+* Menambahkan preview lampiran inline di modal detail untuk gambar dan PDF, dengan fallback unduh untuk tipe lain.
+
+### Dampak
+
+* Tinggi baris tabel pelaporan lebih ringkas dan mudah dipindai.
+* Isi laporan, catatan TL, riwayat, dan lampiran lengkap tetap dapat dibuka dari modal.
+* Tidak mengubah data database, workflow, status, early warning, CSRF, export, hak akses, atau endpoint lampiran.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Isi laporan pendek tampil normal
+* [ ] Isi laporan panjang terpotong 2 baris di tabel
+* [ ] Lihat Isi Lengkap membuka modal detail isi laporan
+* [ ] Catatan TL pendek tampil normal
+* [ ] Catatan TL panjang terpotong 2 baris di tabel
+* [ ] Lihat Catatan Lengkap membuka modal catatan TL
+* [ ] Laporan tanpa lampiran tidak menampilkan tombol lampiran
+* [ ] Laporan dengan lampiran membuka modal pada bagian Lampiran
+* [ ] Preview JPG/PNG/WEBP/GIF tampil inline jika file tersedia
+* [ ] Preview PDF tampil dalam iframe jika browser mendukung
+* [ ] DOC/DOCX/XLS/XLSX/ZIP menampilkan fallback pratinjau tidak tersedia
+* [ ] Tombol Unduh lampiran tetap berfungsi
+* [ ] Filter, Reset, Export CSV, dan Export Excel tetap normal
+* [ ] Riwayat, aksi status, status TL, dan hapus laporan tetap normal
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan mobile rapi
+* [ ] Tidak ada fatal error
+* [ ] Tidak ada perubahan database

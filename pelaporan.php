@@ -686,7 +686,7 @@ $roleLabels = [
 
     'admin' => 'Admin SKI',
 
-    'kepala_ski' => 'Kepala SKI',
+    'kepala_ski' => 'Ka SKI',
 
     'direktur' => 'Direktur'
 
@@ -1896,6 +1896,27 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
     .mini-stat small{display:block;color:#6b7280;font-size:.78rem;}
 
+    .pelaporan-table{ min-width:1180px; }
+    .pelaporan-table th{ white-space:nowrap; font-size:.82rem; color:#244235; }
+    .pelaporan-table td{ vertical-align:top; }
+    .pelaporan-code{ display:inline-flex; align-items:center; min-width:112px; justify-content:center; font-weight:700; letter-spacing:.01em; }
+    .pelaporan-summary{ max-width:520px; min-width:280px; }
+    .pelaporan-summary__category{ font-weight:700; color:#0f5132; margin-bottom:.2rem; }
+    .pelaporan-summary__text{ color:#344054; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.45; }
+    .tl-note-clamp{ color:#667085; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; word-break:normal; overflow-wrap:anywhere; }
+    .pelaporan-row-actions{ display:flex; align-items:center; justify-content:flex-end; gap:.45rem; white-space:nowrap; }
+    .pelaporan-row-actions .btn{ min-height:32px; }
+    .pelaporan-meta-muted{ color:#667085; font-size:.78rem; }
+    .pelaporan-warning-cell{ min-width:170px; }
+    .pelaporan-tl-cell{ min-width:190px; }
+    .pelaporan-action-menu .dropdown-item{ font-size:.88rem; }
+    .pelaporan-action-menu .dropdown-item.text-danger:hover{ background:#fff1f2; color:#b42318; }
+
+    @media (max-width: 767.98px){
+      .pelaporan-row-actions{ justify-content:flex-start; flex-wrap:wrap; }
+      .pelaporan-summary{ max-width:none; }
+    }
+
   </style>
 
   <?php include __DIR__ . '/includes/head_favicon.php'; ?>
@@ -2084,7 +2105,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
     <div class="table-responsive">
 
-      <table class="table align-middle">
+      <table class="table align-middle pelaporan-table">
 
         <thead>
 
@@ -2092,25 +2113,21 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
             <th style="width:140px">Kode</th>
 
-            <th style="width:120px">Kategori</th>
+            <th>Kategori &amp; Isi</th>
 
-            <th>Isi (ringkas)</th>
+            <th style="width:150px">Dibuat</th>
 
-            <th style="width:120px">Lampiran</th>
-
-            <th style="width:160px">Dibuat</th>
-
-            <th style="width:160px">Status</th>
+            <th style="width:170px">Status</th>
 
             <?php if($showTlColumns): ?>
 
-              <th style="width:190px">Early-Warning Direktur/TL</th>
+              <th style="width:190px">Early Warning</th>
 
-              <th style="width:240px">Status TL</th>
+              <th style="width:220px">Status TL</th>
 
             <?php endif; ?>
 
-            <th style="width:340px">Aksi</th>
+            <th style="width:220px" class="text-end">Aksi</th>
 
           </tr>
 
@@ -2120,55 +2137,57 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
           <?php if(empty($rows)): ?>
 
-            <tr><td colspan="7"><div class="empty-state">Tidak ada data ditemukan.<div class="hint">Coba ubah filter/pencarian.</div></div></td></tr>
+            <tr><td colspan="<?= $showTlColumns ? 7 : 5 ?>"><div class="empty-state">Tidak ada data ditemukan.<div class="hint">Coba ubah filter/pencarian.</div></div></td></tr>
 
           <?php else: ?>
 
             <?php foreach($rows as $r): ?>
 
+              <?php
+                $lampiranCount = $lampCount[$r['kode']] ?? 0;
+                $createdCompact = '-';
+                if (!empty($r['created_at'])) {
+                    $createdTs = strtotime((string)$r['created_at']);
+                    $createdCompact = $createdTs ? date('d/m/Y H:i', $createdTs) : (string)$r['created_at'];
+                }
+                $primaryAction = null;
+                $secondaryActions = [];
+                foreach (($r['actions'] ?? []) as $act) {
+                    $labelLower = strtolower((string)($act['label'] ?? ''));
+                    if ($primaryAction === null && ($act['to'] === 'Verifikasi SKI' || strpos($labelLower, 'teruskan') !== false || strpos($labelLower, 'kirim') !== false)) {
+                        $primaryAction = $act;
+                    } else {
+                        $secondaryActions[] = $act;
+                    }
+                }
+                if ($primaryAction === null && count($secondaryActions) === 1) {
+                    $primaryAction = array_shift($secondaryActions);
+                }
+              ?>
+
               <tr>
 
-                <td><span class="badge badge-soft"><?= e($r['kode']) ?></span></td>
-
-                <td><?= e($r['kategori']) ?></td>
+                <td><span class="badge badge-soft pelaporan-code"><?= e($r['kode']) ?></span></td>
 
                 <td>
-
-                  <?php if($actor === 'direktur' && !empty($r['rekap_note'])): ?>
-
-                    <div class="small text-muted">Ringkasan Admin SKI</div>
-
-                    <?= nl2br(e($r['display_text'])) ?>
-
-                  <?php else: ?>
-
-                    <?= nl2br(e($r['display_text'])) ?>
-
-                  <?php endif; ?>
-
-                  <div class="mt-2">
-                    <button type="button" class="btn btn-sm btn-link p-0 fw-semibold js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="content" aria-label="Lihat isi lengkap laporan <?= e((string)$r['kode']) ?>">Lihat Isi Lengkap</button>
+                  <div class="pelaporan-summary">
+                    <div class="pelaporan-summary__category"><?= e($r['kategori']) ?></div>
+                    <?php if($actor === 'direktur' && !empty($r['rekap_note'])): ?>
+                      <div class="pelaporan-meta-muted text-uppercase fw-semibold mb-1">Ringkasan Admin SKI</div>
+                    <?php endif; ?>
+                    <div class="pelaporan-summary__text"><?= nl2br(e($r['display_text'])) ?></div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                      <button type="button" class="btn btn-sm btn-link p-0 fw-semibold js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="content" aria-label="Lihat isi lengkap laporan <?= e((string)$r['kode']) ?>">Lihat Isi Lengkap</button>
+                      <?php if($lampiranCount>0): ?>
+                        <button type="button" class="btn btn-sm btn-outline-success js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="attachments"><i class="bi bi-paperclip me-1"></i>Lihat (<?= (int)$lampiranCount ?>)</button>
+                      <?php else: ?>
+                        <span class="pelaporan-meta-muted"><i class="bi bi-paperclip me-1"></i>Tidak ada lampiran</span>
+                      <?php endif; ?>
+                    </div>
                   </div>
-
                 </td>
 
-                <td>
-
-                  <?php $cnt = $lampCount[$r['kode']] ?? 0; ?>
-
-                  <?php if($cnt>0): ?>
-
-                    <button type="button" class="btn btn-sm btn-outline-success js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>">Lihat (<?= $cnt ?>)</button>
-
-                  <?php else: ?>
-
-                    <span class="text-muted">-</span>
-
-                  <?php endif; ?>
-
-                </td>
-
-                <td><?= e($r['created_at']) ?></td>
+                <td><span class="small"><?= e($createdCompact) ?></span></td>
 
                 <td>
 
@@ -2184,7 +2203,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                 <?php if($showTlColumns): ?>
 
-                  <td>
+                  <td class="pelaporan-warning-cell">
 
                     <?php if($r['tl_warning_label']): ?>
 
@@ -2212,7 +2231,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   </td>
 
-                  <td>
+                  <td class="pelaporan-tl-cell">
 
                     <div class="d-flex flex-column gap-2">
 
@@ -2220,7 +2239,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                       <?php if($actor === 'direktur'): ?>
 
-                        <form method="post" class="d-flex flex-wrap gap-2 align-items-center">
+                        <form method="post" class="d-flex flex-column gap-2">
 
                           <?= csrf_field(); ?>
 
@@ -2228,19 +2247,21 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                           <input type="hidden" name="kode" value="<?= e($r['kode']) ?>">
 
-                          <select name="tl_status" class="form-select form-select-sm" style="width:auto">
+                          <div class="d-flex gap-2">
+                            <select name="tl_status" class="form-select form-select-sm">
 
-                            <?php foreach(pelaporan_tl_allowed_statuses() as $opt): ?>
+                              <?php foreach(pelaporan_tl_allowed_statuses() as $opt): ?>
 
-                              <option value="<?= e($opt) ?>" <?= $opt===$r['tl_status']?'selected':'' ?>><?= e($opt) ?></option>
+                                <option value="<?= e($opt) ?>" <?= $opt===$r['tl_status']?'selected':'' ?>><?= e($opt) ?></option>
 
-                            <?php endforeach; ?>
+                              <?php endforeach; ?>
 
-                          </select>
+                            </select>
 
-                          <input type="date" name="tl_due" value="<?= e((string)$r['tl_due_date']) ?>" class="form-control form-control-sm" style="width:150px" title="Jatuh tempo tindak lanjut">
+                            <input type="date" name="tl_due" value="<?= e((string)$r['tl_due_date']) ?>" class="form-control form-control-sm" title="Jatuh tempo tindak lanjut">
+                          </div>
 
-                          <input type="text" name="tl_note" value="<?= e($r['tl_catatan']) ?>" class="form-control form-control-sm" style="width:200px" placeholder="Catatan (opsional)">
+                          <input type="text" name="tl_note" value="<?= e($r['tl_catatan']) ?>" class="form-control form-control-sm" placeholder="Catatan TL (opsional)">
 
                           <button class="btn btn-sm btn-success">Simpan TL</button>
 
@@ -2248,17 +2269,25 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                         <?php if(!empty($r['tl_updated_name'])): ?>
 
-                          <div class="small text-muted">Terakhir diperbarui oleh <?= e($r['tl_updated_name']) ?><?php if(!empty($r['tl_updated_at'])): ?> · <?= e($r['tl_updated_at']) ?><?php endif; ?></div>
+                          <div class="small text-muted">Terakhir diperbarui oleh <?= e($r['tl_updated_name']) ?><?php if(!empty($r['tl_updated_at'])): ?> - <?= e($r['tl_updated_at']) ?><?php endif; ?></div>
 
                         <?php endif; ?>
 
                       <?php else: ?>
 
-                        <?php if($r['tl_catatan'] !== ''): ?><div class="small text-muted">Catatan: <?= e($r['tl_catatan']) ?></div><?php endif; ?>
+                                                <?php if($r['tl_catatan'] !== ''): ?>
+                          <div class="tl-note-clamp">Catatan: <?= e($r['tl_catatan']) ?></div>
+                          <button type="button" class="btn btn-sm btn-link p-0 js-tl-note-modal"
+                            data-kode="<?= e((string)$r['kode']) ?>"
+                            data-status="<?= e((string)$r['tl_status']) ?>"
+                            data-note="<?= e((string)$r['tl_catatan']) ?>"
+                            data-updated-by="<?= e((string)$r['tl_updated_name']) ?>"
+                            data-updated-at="<?= e((string)($r['tl_updated_at'] ?? '')) ?>">Lihat Catatan Lengkap</button>
+                        <?php endif; ?>
 
                         <?php if(!empty($r['tl_updated_name'])): ?>
 
-                          <div class="small text-muted">Terakhir diperbarui <?= e($r['tl_updated_name']) ?><?php if(!empty($r['tl_updated_at'])): ?> · <?= e($r['tl_updated_at']) ?><?php endif; ?></div>
+                          <div class="small text-muted">Terakhir diperbarui <?= e($r['tl_updated_name']) ?><?php if(!empty($r['tl_updated_at'])): ?> - <?= e($r['tl_updated_at']) ?><?php endif; ?></div>
 
                         <?php endif; ?>
 
@@ -2271,85 +2300,46 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
                 <?php endif; ?>
 
                 <td>
+                  <div class="pelaporan-row-actions">
+                    <button type="button" class="btn btn-sm btn-outline-success js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>"><i class="bi bi-eye me-1"></i>Detail</button>
 
-                  <div class="d-flex flex-column gap-2">
+                    <?php if($primaryAction): ?>
+                      <button type="button" class="btn btn-sm btn-primary js-pelaporan-status-modal"
+                        data-kode="<?= e((string)$r['kode']) ?>"
+                        data-status="<?= e((string)$primaryAction['to']) ?>"
+                        data-label="<?= e((string)$primaryAction['label']) ?>"
+                        data-note-placeholder="<?= e((string)($primaryAction['note_placeholder'] ?? 'Catatan (opsional)')) ?>"
+                        data-note-required="<?= !empty($primaryAction['note_required']) ? '1' : '0' ?>"
+                        data-attachment="<?= !empty($primaryAction['allow_attachment']) ? '1' : '0' ?>">
+                        <?= e((string)$primaryAction['label']) ?><?= !empty($primaryAction['note_required']) ? ' *' : '' ?>
+                      </button>
+                    <?php endif; ?>
 
-                    <button type="button" class="btn btn-sm btn-outline-secondary js-report-history" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="history"><i class="bi bi-clock-history me-1"></i>Riwayat</button>
-
-                    <?php if(!empty($r['actions'])): ?>
-
-                      <?php if($actor === 'direktur'): ?>
-
-                        <?php if($r['status_canonical'] === 'Verifikasi Direktur'): ?>
-
-                          <div class="small text-muted text-uppercase fw-semibold">Aksi Verifikasi Direktur</div>
-
-                        <?php elseif(in_array($r['status_canonical'], ['Diteruskan ke Unit TL','Monitoring TL'], true)): ?>
-
-                          <div class="small text-muted text-uppercase fw-semibold">Aksi Tindak Lanjut</div>
-
+                    <div class="dropdown pelaporan-action-menu">
+                      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Lainnya</button>
+                      <ul class="dropdown-menu dropdown-menu-end">
+                        <li><button type="button" class="dropdown-item js-report-history" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="history"><i class="bi bi-clock-history me-2"></i>Lihat Riwayat</button></li>
+                        <?php foreach($secondaryActions as $act): ?>
+                          <li><button type="button" class="dropdown-item js-pelaporan-status-modal"
+                            data-kode="<?= e((string)$r['kode']) ?>"
+                            data-status="<?= e((string)$act['to']) ?>"
+                            data-label="<?= e((string)$act['label']) ?>"
+                            data-note-placeholder="<?= e((string)($act['note_placeholder'] ?? 'Catatan (opsional)')) ?>"
+                            data-note-required="<?= !empty($act['note_required']) ? '1' : '0' ?>"
+                            data-attachment="<?= !empty($act['allow_attachment']) ? '1' : '0' ?>">
+                            <?= e((string)$act['label']) ?><?= !empty($act['note_required']) ? ' *' : '' ?>
+                          </button></li>
+                        <?php endforeach; ?>
+                        <?php if ($actor === 'admin'): ?>
+                          <li><hr class="dropdown-divider"></li>
+                          <li><button type="button" class="dropdown-item text-danger js-pelaporan-delete-modal" data-kode="<?= e((string)$r['kode']) ?>"><i class="bi bi-trash me-2"></i>Hapus Laporan</button></li>
                         <?php endif; ?>
-
-                      <?php endif; ?>
-
-                      <?php foreach($r['actions'] as $act): ?>
-
-                        <form method="post" class="d-flex flex-wrap gap-2 align-items-center" <?= !empty($act['allow_attachment']) ? 'enctype="multipart/form-data"' : '' ?>>
-
-                          <?= csrf_field(); ?>
-
-                          <input type="hidden" name="action" value="update_status">
-
-                          <input type="hidden" name="kode" value="<?= e($r['kode']) ?>">
-
-                          <input type="hidden" name="status" value="<?= e($act['to']) ?>">
-
-                          <?php if (!empty($act['note_placeholder']) || !empty($act['note_required'])): ?>
-
-                            <input name="note" class="form-control form-control-sm flex-grow-1" placeholder="<?= e($act['note_placeholder'] ?: 'Catatan (opsional)') ?>" <?= !empty($act['note_required']) ? 'required' : '' ?>>
-
-                          <?php else: ?>
-
-                            <input type="hidden" name="note" value="">
-
-                          <?php endif; ?>
-
-                          <?php if (!empty($act['allow_attachment'])): ?>
-
-                            <input type="file" name="attachment" class="form-control form-control-sm" style="max-width:240px" accept="<?= e(pelaporan_rekap_accept_attr()) ?>" title="Lampiran (opsional)">
-
-                          <?php endif; ?>
-
-                          <button class="btn btn-sm btn-primary"><?= e($act['label']) ?><?= !empty($act['note_required']) ? ' *' : '' ?></button>
-
-                        </form>
-
-                      <?php endforeach; ?>
-
-                    <?php else: ?>
-
-                      <span class="text-muted small">Tidak ada aksi untuk peran ini.</span>
-
-                    <?php endif; ?>
-
-                    <?php if ($actor === 'admin'): ?>
-
-                      <form method="post" class="d-flex gap-2 align-items-center" onsubmit="return confirm('Hapus laporan <?= e($r['kode']) ?>? Tindakan ini tidak dapat dibatalkan.');">
-
-                        <?= csrf_field(); ?>
-
-                        <input type="hidden" name="action" value="delete_report">
-
-                        <input type="hidden" name="kode" value="<?= e($r['kode']) ?>">
-
-                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Hapus Laporan</button>
-
-                      </form>
-
-                    <?php endif; ?>
-
+                        <?php if(empty($r['actions']) && $actor !== 'admin'): ?>
+                          <li><span class="dropdown-item-text text-muted small">Tidak ada aksi untuk peran ini.</span></li>
+                        <?php endif; ?>
+                      </ul>
+                    </div>
                   </div>
-
                 </td>
 
               </tr>
@@ -2397,6 +2387,88 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 </main>
 
 
+<div class="modal fade" id="pelaporanTlNoteModal" tabindex="-1" aria-labelledby="pelaporanTlNoteModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <p class="small text-muted text-uppercase fw-semibold mb-1">Catatan Tindak Lanjut</p>
+          <h5 class="modal-title" id="pelaporanTlNoteModalTitle">Catatan TL</h5>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <dl class="row small mb-3">
+          <dt class="col-sm-4">Kode laporan</dt><dd class="col-sm-8" data-tl-note-kode>-</dd>
+          <dt class="col-sm-4">Status TL</dt><dd class="col-sm-8" data-tl-note-status>-</dd>
+          <dt class="col-sm-4">Diperbarui oleh</dt><dd class="col-sm-8" data-tl-note-updated-by>-</dd>
+          <dt class="col-sm-4">Tanggal</dt><dd class="col-sm-8" data-tl-note-updated-at>-</dd>
+        </dl>
+        <div class="border rounded-3 p-3 bg-light" style="white-space:pre-wrap" data-tl-note-full>-</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Tutup</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal fade" id="pelaporanStatusModal" tabindex="-1" aria-labelledby="pelaporanStatusModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" enctype="multipart/form-data" class="modal-content" data-pelaporan-status-form>
+      <?= csrf_field(); ?>
+      <input type="hidden" name="action" value="update_status">
+      <input type="hidden" name="kode" value="" data-pelaporan-status-kode>
+      <input type="hidden" name="status" value="" data-pelaporan-status-target>
+      <div class="modal-header">
+        <div>
+          <p class="small text-muted text-uppercase fw-semibold mb-1">Aksi Laporan</p>
+          <h5 class="modal-title" id="pelaporanStatusModalTitle">Tindak lanjuti laporan</h5>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-light border small mb-3">Kode laporan: <strong data-pelaporan-status-code-label>-</strong></div>
+        <label class="form-label" for="pelaporanStatusNote">Catatan</label>
+        <textarea id="pelaporanStatusNote" name="note" class="form-control" rows="4" data-pelaporan-status-note placeholder="Catatan (opsional)"></textarea>
+        <div class="form-text" data-pelaporan-status-note-help>Isi catatan jika diperlukan untuk proses tindak lanjut.</div>
+        <div class="mt-3" data-pelaporan-status-attachment-wrap hidden>
+          <label class="form-label" for="pelaporanStatusAttachment">Lampiran rekap</label>
+          <input id="pelaporanStatusAttachment" type="file" name="attachment" class="form-control" accept="<?= e(pelaporan_rekap_accept_attr()) ?>" data-pelaporan-status-attachment>
+          <div class="form-text">Lampiran bersifat opsional dan mengikuti validasi file yang sudah ada.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+        <button type="submit" class="btn btn-primary" data-pelaporan-status-submit>Proses</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="pelaporanDeleteModal" tabindex="-1" aria-labelledby="pelaporanDeleteModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" class="modal-content" data-pelaporan-delete-form>
+      <?= csrf_field(); ?>
+      <input type="hidden" name="action" value="delete_report">
+      <input type="hidden" name="kode" value="" data-pelaporan-delete-kode>
+      <div class="modal-header">
+        <div>
+          <p class="small text-danger text-uppercase fw-semibold mb-1">Konfirmasi Hapus</p>
+          <h5 class="modal-title" id="pelaporanDeleteModalTitle">Hapus laporan?</h5>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Laporan <strong data-pelaporan-delete-code-label>-</strong> akan dihapus beserta log dan lampiran terkait.</p>
+        <div class="alert alert-warning small mb-0">Tindakan ini tidak dapat dibatalkan. Pastikan laporan memang boleh dihapus.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+        <button type="submit" class="btn btn-danger">Hapus Laporan</button>
+      </div>
+    </form>
+  </div>
+</div>
 <?php include __DIR__ . '/includes/report_detail_modal.php'; ?>
 
 <footer class="text-center py-3 small text-muted">&copy; <?= date('Y') ?> SIKAT &ndash; Team IT Poltekkes Ternate | Ded</footer>
@@ -2405,6 +2477,75 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="<?= e(asset_url('assets/js/report_detail_modal.js')) ?>"></script>
+<script>
+(function(){
+  const statusModalEl = document.getElementById('pelaporanStatusModal');
+  const deleteModalEl = document.getElementById('pelaporanDeleteModal');
+  const tlNoteModalEl = document.getElementById('pelaporanTlNoteModal');
+
+  document.addEventListener('click', function(event){
+    const statusBtn = event.target.closest('.js-pelaporan-status-modal');
+    if (statusBtn && statusModalEl && window.bootstrap) {
+      const kode = statusBtn.getAttribute('data-kode') || '';
+      const target = statusBtn.getAttribute('data-status') || '';
+      const label = statusBtn.getAttribute('data-label') || 'Proses laporan';
+      const placeholder = statusBtn.getAttribute('data-note-placeholder') || 'Catatan (opsional)';
+      const noteRequired = statusBtn.getAttribute('data-note-required') === '1';
+      const needsAttachment = statusBtn.getAttribute('data-attachment') === '1';
+      const title = statusModalEl.querySelector('#pelaporanStatusModalTitle');
+      const codeLabel = statusModalEl.querySelector('[data-pelaporan-status-code-label]');
+      const kodeInput = statusModalEl.querySelector('[data-pelaporan-status-kode]');
+      const targetInput = statusModalEl.querySelector('[data-pelaporan-status-target]');
+      const note = statusModalEl.querySelector('[data-pelaporan-status-note]');
+      const noteHelp = statusModalEl.querySelector('[data-pelaporan-status-note-help]');
+      const attachmentWrap = statusModalEl.querySelector('[data-pelaporan-status-attachment-wrap]');
+      const attachment = statusModalEl.querySelector('[data-pelaporan-status-attachment]');
+      const submit = statusModalEl.querySelector('[data-pelaporan-status-submit]');
+
+      if (title) title.textContent = label;
+      if (codeLabel) codeLabel.textContent = kode || '-';
+      if (kodeInput) kodeInput.value = kode;
+      if (targetInput) targetInput.value = target;
+      if (note) {
+        note.value = '';
+        note.placeholder = placeholder;
+        note.required = noteRequired;
+      }
+      if (noteHelp) noteHelp.textContent = noteRequired ? 'Catatan wajib diisi untuk aksi ini.' : 'Isi catatan jika diperlukan untuk proses tindak lanjut.';
+      if (attachmentWrap) attachmentWrap.hidden = !needsAttachment;
+      if (attachment) attachment.value = '';
+      if (submit) submit.textContent = label;
+
+      window.bootstrap.Modal.getOrCreateInstance(statusModalEl).show();
+      return;
+    }
+
+    const tlNoteBtn = event.target.closest('.js-tl-note-modal');
+    if (tlNoteBtn && tlNoteModalEl && window.bootstrap) {
+      const set = function(selector, value) {
+        const el = tlNoteModalEl.querySelector(selector);
+        if (el) el.textContent = value && String(value).trim() !== '' ? value : '-';
+      };
+      set('[data-tl-note-kode]', tlNoteBtn.getAttribute('data-kode') || '');
+      set('[data-tl-note-status]', tlNoteBtn.getAttribute('data-status') || '');
+      set('[data-tl-note-updated-by]', tlNoteBtn.getAttribute('data-updated-by') || '');
+      set('[data-tl-note-updated-at]', tlNoteBtn.getAttribute('data-updated-at') || '');
+      set('[data-tl-note-full]', tlNoteBtn.getAttribute('data-note') || '');
+      window.bootstrap.Modal.getOrCreateInstance(tlNoteModalEl).show();
+      return;
+    }
+    const deleteBtn = event.target.closest('.js-pelaporan-delete-modal');
+    if (deleteBtn && deleteModalEl && window.bootstrap) {
+      const kode = deleteBtn.getAttribute('data-kode') || '';
+      const codeLabel = deleteModalEl.querySelector('[data-pelaporan-delete-code-label]');
+      const kodeInput = deleteModalEl.querySelector('[data-pelaporan-delete-kode]');
+      if (codeLabel) codeLabel.textContent = kode || '-';
+      if (kodeInput) kodeInput.value = kode;
+      window.bootstrap.Modal.getOrCreateInstance(deleteModalEl).show();
+    }
+  });
+})();
+</script>
 
 </body>
 

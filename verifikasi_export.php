@@ -95,7 +95,7 @@ if ($laporanRow) {
   fputcsv($out, ['Rekomendasi', preg_replace('/\s+/', ' ', $laporanRow['rekomendasi'] ?? '')]);
   fputcsv($out, ['Tindak Lanjut', preg_replace('/\s+/', ' ', $laporanRow['tindak_lanjut'] ?? '')]);
   $ttdInfo = trim(($laporanRow['ttd_kepala_nama'] ?? '').' '.($laporanRow['ttd_kepala_tanggal'] ?? ''));
-  fputcsv($out, ['Kepala SKI (TTD)', $ttdInfo]);
+  fputcsv($out, ['Ka SKI (TTD)', $ttdInfo]);
 }
 fclose($out);
 exit;

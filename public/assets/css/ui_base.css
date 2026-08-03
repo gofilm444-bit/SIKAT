@@ -921,6 +921,50 @@
   gap: 8px;
   margin-top: 8px;
 }
+.report-attachment.is-active {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+.report-attachment-preview {
+  margin-top: 12px;
+  border: 1px solid #cfe8d8;
+  border-radius: 12px;
+  background: #f8fcfa;
+  padding: 12px;
+}
+.report-attachment-preview__title {
+  font-weight: 700;
+  color: #075f36;
+  margin-bottom: 8px;
+}
+.report-attachment-preview__media {
+  width: 100%;
+  min-height: 280px;
+  border: 1px solid #dbe8df;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.report-attachment-preview__media img {
+  display: block;
+  max-width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+}
+.report-attachment-preview__media iframe {
+  width: 100%;
+  height: min(62vh, 620px);
+  border: 0;
+  background: #fff;
+}
+.report-attachment-preview__empty {
+  color: #667085;
+  text-align: center;
+  padding: 24px;
+}
 .report-timeline {
   display: flex;
   flex-direction: column;

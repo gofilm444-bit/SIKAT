@@ -171,9 +171,9 @@ $LOGIN_ROLE_LABELS = [
 
   'auditor'           => 'Auditor',
 
-  'auditor_ka'        => 'Auditor - Kepala SKI',
+  'auditor_ka'        => 'Auditor - Ka SKI',
 
-  'kepala_ski'        => 'Kepala SKI',
+  'kepala_ski'        => 'Ka SKI',
 
   'direktur'          => 'Direktur',
 

@@ -80,10 +80,78 @@
     return url.toString();
   };
 
+  const attachmentKind = (item) => {
+    const mime = String(item && item.mime ? item.mime : '').toLowerCase();
+    const name = String(item && item.name ? item.name : '').toLowerCase();
+    if (mime.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/.test(name)) return 'image';
+    if (mime === 'application/pdf' || /\.pdf$/.test(name)) return 'pdf';
+    return 'other';
+  };
+
+  const renderAttachmentPreview = (item) => {
+    const preview = modal.querySelector('[data-report-attachment-preview]');
+    if (!preview) return;
+    preview.textContent = '';
+    preview.hidden = false;
+
+    const title = document.createElement('div');
+    title.className = 'report-attachment-preview__title';
+    title.textContent = item.name || 'Lampiran';
+    preview.appendChild(title);
+
+    const media = document.createElement('div');
+    media.className = 'report-attachment-preview__media';
+    const kind = attachmentKind(item);
+    if (kind === 'image' && item.view_url) {
+      const img = document.createElement('img');
+      img.src = item.view_url;
+      img.alt = item.name || 'Pratinjau lampiran';
+      img.loading = 'lazy';
+      media.appendChild(img);
+    } else if (kind === 'pdf' && item.view_url) {
+      const frame = document.createElement('iframe');
+      frame.src = item.view_url;
+      frame.title = item.name || 'Pratinjau PDF';
+      frame.loading = 'lazy';
+      media.appendChild(frame);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'report-attachment-preview__empty';
+      empty.textContent = 'Pratinjau tidak tersedia untuk tipe file ini.';
+      media.appendChild(empty);
+    }
+    preview.appendChild(media);
+
+    const actions = document.createElement('div');
+    actions.className = 'report-attachment__actions';
+    if (item.view_url) {
+      const open = document.createElement('a');
+      open.className = 'btn btn-sm btn-outline-primary';
+      open.href = item.view_url;
+      open.target = '_blank';
+      open.rel = 'noopener';
+      open.textContent = 'Buka';
+      actions.appendChild(open);
+    }
+    if (item.download_url) {
+      const download = document.createElement('a');
+      download.className = 'btn btn-sm btn-outline-success';
+      download.href = item.download_url;
+      download.textContent = 'Unduh';
+      actions.appendChild(download);
+    }
+    preview.appendChild(actions);
+  };
+
   const renderAttachments = (items) => {
     const wrap = modal.querySelector('[data-report-attachments]');
+    const preview = modal.querySelector('[data-report-attachment-preview]');
     if (!wrap) return;
     wrap.textContent = '';
+    if (preview) {
+      preview.textContent = '';
+      preview.hidden = true;
+    }
     if (!Array.isArray(items) || items.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'report-detail-empty';
@@ -110,12 +178,19 @@
       const actions = document.createElement('div');
       actions.className = 'report-attachment__actions';
       if (item.view_url) {
-        const view = document.createElement('a');
+        const view = document.createElement('button');
+        view.type = 'button';
         view.className = 'btn btn-sm btn-outline-primary';
-        view.href = item.view_url;
-        view.target = '_blank';
-        view.rel = 'noopener';
-        view.textContent = 'Lihat';
+        view.textContent = 'Preview';
+        view.addEventListener('click', () => {
+          list.querySelectorAll('.report-attachment.is-active').forEach((el) => el.classList.remove('is-active'));
+          card.classList.add('is-active');
+          renderAttachmentPreview(item);
+          const previewPanel = modal.querySelector('[data-report-attachment-preview]');
+          if (previewPanel && body) {
+            previewPanel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          }
+        });
         actions.appendChild(view);
       }
       if (item.download_url) {
@@ -129,6 +204,11 @@
       list.appendChild(card);
     });
     wrap.appendChild(list);
+    if (items.length === 1 && items[0] && items[0].view_url) {
+      const firstCard = list.querySelector('.report-attachment');
+      if (firstCard) firstCard.classList.add('is-active');
+      renderAttachmentPreview(items[0]);
+    }
   };
 
   const renderHistory = (items) => {
@@ -208,9 +288,9 @@
     setHidden(errorBox, true);
     setHidden(content, false);
 
-    if (focus === 'history' || focus === 'content') {
+    if (focus === 'history' || focus === 'content' || focus === 'attachments') {
       window.setTimeout(() => {
-        const target = document.getElementById(focus === 'history' ? 'reportDetailHistorySection' : 'reportDetailContentSection');
+        const target = document.getElementById(focus === 'history' ? 'reportDetailHistorySection' : (focus === 'attachments' ? 'reportDetailAttachmentsSection' : 'reportDetailContentSection'));
         if (target && body) {
           target.scrollIntoView({ block: 'start', behavior: 'smooth' });
           target.classList.add('report-detail-panel--highlight');

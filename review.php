@@ -121,6 +121,84 @@ if (!function_exists('unit_slug_compact')) {
     return str_replace('_', '', unit_slug($value));
   }
 }
+if (!function_exists('review_table_column_exists')) {
+  function review_table_column_exists(mysqli $conn, string $table, string $column): bool {
+    static $cache = [];
+    $key = $table.'.'.$column;
+    if (array_key_exists($key, $cache)) { return $cache[$key]; }
+    $tableEsc = $conn->real_escape_string($table);
+    $columnEsc = $conn->real_escape_string($column);
+    $ok = false;
+    if ($rs = $conn->query("SHOW COLUMNS FROM `{$tableEsc}` LIKE '{$columnEsc}'")) {
+      $ok = $rs->num_rows > 0;
+      $rs->free();
+    }
+    $cache[$key] = $ok;
+    return $ok;
+  }
+}
+if (!function_exists('review_template_options')) {
+  function review_template_options(): array {
+    $options = [];
+    if (!function_exists('chr_template_registry')) { return $options; }
+    foreach (chr_template_registry() as $code => $template) {
+      if (($template['status'] ?? 'active') === 'inactive') { continue; }
+      $options[(string)$code] = [
+        'code' => (string)$code,
+        'name' => function_exists('chr_template_display_name') ? chr_template_display_name((string)$code) : (string)($template['name'] ?? $code),
+        'version' => function_exists('chr_template_version') ? chr_template_version((string)$code) : max(1, (int)($template['version'] ?? 1)),
+      ];
+    }
+    return $options;
+  }
+}
+if (!function_exists('review_template_code_from_name')) {
+  function review_template_code_from_name(string $name): string {
+    $name = trim($name);
+    if ($name === '' || !function_exists('chr_template_registry') || !function_exists('chr_template_normalize_name')) {
+      return '';
+    }
+    $target = chr_template_normalize_name($name);
+    foreach (chr_template_registry() as $code => $template) {
+      $aliases = $template['aliases'] ?? [];
+      $aliases[] = $template['name'] ?? '';
+      foreach ($aliases as $alias) {
+        if (chr_template_normalize_name((string)$alias) === $target) {
+          return (string)$code;
+        }
+      }
+    }
+    return '';
+  }
+}
+if (!function_exists('review_resolve_template_for_jenis')) {
+  function review_resolve_template_for_jenis(mysqli $conn, int $jenisId): array {
+    if ($jenisId < 1) { return ['', 1, '']; }
+    $hasTemplateCode = review_table_column_exists($conn, 'jenis_reviu', 'template_code');
+    $hasTemplateVersion = review_table_column_exists($conn, 'jenis_reviu', 'template_version');
+    $cols = ['nama'];
+    if ($hasTemplateCode) { $cols[] = 'template_code'; }
+    if ($hasTemplateVersion) { $cols[] = 'template_version'; }
+    $stmt = $conn->prepare("SELECT ".implode(',', $cols)." FROM jenis_reviu WHERE id=? AND aktif=1 LIMIT 1");
+    if (!$stmt) { return ['', 1, '']; }
+    $stmt->bind_param("i", $jenisId);
+    $row = null;
+    if ($stmt->execute()) {
+      $row = $stmt->get_result()->fetch_assoc();
+    }
+    $stmt->close();
+    if (!$row) { return ['', 1, '']; }
+    $code = trim((string)($row['template_code'] ?? ''));
+    if ($code === '' || !chr_template_get($code)) {
+      $code = review_template_code_from_name((string)($row['nama'] ?? ''));
+    }
+    $version = max(1, (int)($row['template_version'] ?? (function_exists('chr_template_version') && $code !== '' ? chr_template_version($code) : 1)));
+    if ($code !== '' && function_exists('chr_template_version')) {
+      $version = chr_template_version($code);
+    }
+    return [$code, $version, (string)($row['nama'] ?? '')];
+  }
+}
 
 /* ====== RBAC HELPERS ====== */
 if (!function_exists('user_id')) {
@@ -352,23 +430,65 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && csrf_ok($_
   /* ---- MASTER: JENIS ---- */
   if ($act==='jenis_create' && in_array($role,['admin','super_admin','superadmin'])) {
     $nama=trim($_POST['nama']??''); $desk=trim($_POST['deskripsi']??'');
+    $templateCode = trim((string)($_POST['template_code'] ?? ''));
+    $templateVersion = ($templateCode !== '' && chr_template_get($templateCode)) ? chr_template_version($templateCode) : 1;
     if($nama===''){ flash('err','Nama jenis wajib diisi'); }
+    elseif($templateCode !== '' && !chr_template_get($templateCode)){ flash('err','Template CHR tidak valid.'); }
     else{
-      $st=$conn->prepare("INSERT INTO jenis_reviu (nama,deskripsi,aktif) VALUES (?,?,1)");
-      $st->bind_param("ss",$nama,$desk);
+      $hasTemplateCols = review_table_column_exists($conn, 'jenis_reviu', 'template_code') && review_table_column_exists($conn, 'jenis_reviu', 'template_version');
+      if ($hasTemplateCols) {
+        $st=$conn->prepare("INSERT INTO jenis_reviu (nama,deskripsi,template_code,template_version,aktif) VALUES (?,?,?,?,1)");
+        $st->bind_param("sssi",$nama,$desk,$templateCode,$templateVersion);
+      } else {
+        $st=$conn->prepare("INSERT INTO jenis_reviu (nama,deskripsi,aktif) VALUES (?,?,1)");
+        $st->bind_param("ss",$nama,$desk);
+      }
       $ok=$st->execute();
       flash($ok?'ok':'err',$ok?'Jenis ditambahkan.':'Gagal menambah jenis.');
     }
     header('Location: '.$_SERVER['PHP_SELF'].'?tab=master'); exit;
   }
 
+  if ($act==='jenis_template_update' && in_array($role,['admin','super_admin','superadmin'])) {
+    $jenisId = (int)($_POST['jenis_id'] ?? 0);
+    $templateCode = trim((string)($_POST['template_code'] ?? ''));
+    if (!review_table_column_exists($conn, 'jenis_reviu', 'template_code') || !review_table_column_exists($conn, 'jenis_reviu', 'template_version')) {
+      flash('err','Kolom pemetaan template belum tersedia. Jalankan migration review template mapping.');
+    } elseif ($jenisId < 1) {
+      flash('err','Jenis reviu tidak valid.');
+    } elseif ($templateCode === '' || !chr_template_get($templateCode)) {
+      flash('err','Pilih template CHR yang valid.');
+    } else {
+      $templateVersion = chr_template_version($templateCode);
+      $st = $conn->prepare("UPDATE jenis_reviu SET template_code=?, template_version=? WHERE id=? LIMIT 1");
+      $st->bind_param("sii", $templateCode, $templateVersion, $jenisId);
+      $ok = $st->execute();
+      $st->close();
+      flash($ok ? 'ok' : 'err', $ok ? 'Pemetaan template jenis reviu diperbarui.' : 'Gagal memperbarui pemetaan template.');
+    }
+    header('Location: '.$_SERVER['PHP_SELF'].'?tab=master'); exit;
+  }
+
   /* ---- JADWAL: BUAT ---- */
   if ($act==='reviu_create' && in_array($role,['admin','super_admin','superadmin','moderator'])) {
+    $namaKegiatan=trim($_POST['nama_kegiatan']??'');
     $jenis=(int)($_POST['jenis_id']??0);
     $unit=(int)($_POST['unit_id']??0);
     $mulai=$_POST['mulai']??''; $selesai=$_POST['selesai']??''; $deadline=$_POST['deadline']??'';
-    if(!$jenis||!$unit||!$mulai||!$selesai||!$deadline){
-      flash('err','Lengkapi data jadwal');
+    [$templateCode, $templateVersion] = review_resolve_template_for_jenis($conn, $jenis);
+    $hasReviewTemplateCols = review_table_column_exists($conn, 'reviu', 'nama_kegiatan')
+      && review_table_column_exists($conn, 'reviu', 'template_code')
+      && review_table_column_exists($conn, 'reviu', 'template_version');
+    if($namaKegiatan===''||!$jenis||!$unit||!$mulai||!$selesai||!$deadline){
+      flash('err','Lengkapi nama kegiatan, jenis reviu, unit, periode, dan deadline.');
+    } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $mulai) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $selesai) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $deadline)) {
+      flash('err','Format tanggal tidak valid.');
+    } elseif (strtotime($mulai) > strtotime($selesai)) {
+      flash('err','Tanggal mulai tidak boleh melebihi tanggal selesai.');
+    } elseif (!$hasReviewTemplateCols) {
+      flash('err','Kolom nama kegiatan/template belum tersedia. Jalankan migration review template mapping terlebih dahulu.');
+    } elseif ($templateCode === '' || !chr_template_get($templateCode)) {
+      flash('err','Jenis reviu belum memiliki template CHR. Silakan hubungi administrator atau perbaiki pemetaan jenis reviu.');
     } else {
       $ym=date('Ym');
       $prefix = sprintf('RV-%s-', $ym);
@@ -392,8 +512,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && csrf_ok($_
       $errMsg = '';
       for ($tries=0; $tries<5; $tries++) {
         $kode = sprintf('%s%03d', $prefix, $seq);
-        $st=$conn->prepare("INSERT INTO reviu (kode,jenis_id,unit_id,periode_mulai,periode_selesai,tgl_deadline,status,created_by) VALUES (?,?,?,?,?,?, 'Terjadwal', ?)");
-        $st->bind_param("siisssi",$kode,$jenis,$unit,$mulai,$selesai,$deadline,$created_by);
+        $st=$conn->prepare("INSERT INTO reviu (kode,nama_kegiatan,jenis_id,unit_id,periode_mulai,periode_selesai,tgl_deadline,template_code,template_version,status,created_by) VALUES (?,?,?,?,?,?,?,?,?, 'Terjadwal', ?)");
+        $st->bind_param("ssiissssii",$kode,$namaKegiatan,$jenis,$unit,$mulai,$selesai,$deadline,$templateCode,$templateVersion,$created_by);
         $ok=$st->execute();
         if ($ok) { $st->close(); break; }
         $errMsg = (string)$st->error;
@@ -439,6 +559,25 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && csrf_ok($_
       $st->bind_param("si", $deadline, $id);
       $ok = $st->execute();
       flash($ok ? 'ok' : 'err', $ok ? 'Deadline berhasil diperbarui menjadi '.$deadline : 'Gagal memperbarui deadline.');
+    }
+    header('Location: '.$_SERVER['PHP_SELF'].'?tab=jadwal'); exit;
+  }
+
+  if ($act==='reviu_note_update' && (in_array($role,['admin','super_admin','superadmin','moderator'], true) || is_auditor($role))) {
+    $id = (int)($_POST['id'] ?? 0);
+    $catatan = trim((string)($_POST['catatan'] ?? ''));
+    if (function_exists('mb_substr')) {
+      $catatan = mb_substr($catatan, 0, 5000);
+    } else {
+      $catatan = substr($catatan, 0, 5000);
+    }
+    if (!$id) {
+      flash('err','Data reviu tidak valid.');
+    } else {
+      $st = $conn->prepare("UPDATE reviu SET catatan=? WHERE id=?");
+      $st->bind_param("si", $catatan, $id);
+      $ok = $st->execute();
+      flash($ok ? 'ok' : 'err', $ok ? 'Catatan status berhasil diperbarui.' : 'Gagal memperbarui catatan status.');
     }
     header('Location: '.$_SERVER['PHP_SELF'].'?tab=jadwal'); exit;
   }
@@ -1029,7 +1168,34 @@ if ($tab === 'laporan' && is_auditee() && !is_director_like($role)) {
 }
 
 $units = $conn->query("SELECT id,nama FROM unit_kerja WHERE aktif=1 ORDER BY nama ASC")->fetch_all(MYSQLI_ASSOC);
-$jenis = $conn->query("SELECT id,nama FROM jenis_reviu WHERE aktif=1 ORDER BY nama ASC")->fetch_all(MYSQLI_ASSOC);
+$hasJenisTemplateCode = review_table_column_exists($conn, 'jenis_reviu', 'template_code');
+$hasJenisTemplateVersion = review_table_column_exists($conn, 'jenis_reviu', 'template_version');
+$jenisSelect = "id,nama,deskripsi,aktif";
+if ($hasJenisTemplateCode) { $jenisSelect .= ",template_code"; }
+if ($hasJenisTemplateVersion) { $jenisSelect .= ",template_version"; }
+$jenis = $conn->query("SELECT {$jenisSelect} FROM jenis_reviu WHERE aktif=1 ORDER BY nama ASC")->fetch_all(MYSQLI_ASSOC);
+$templateOptions = review_template_options();
+$hasReviewNamaKegiatan = review_table_column_exists($conn, 'reviu', 'nama_kegiatan');
+$hasReviewTemplateCode = review_table_column_exists($conn, 'reviu', 'template_code');
+$hasReviewTemplateVersion = review_table_column_exists($conn, 'reviu', 'template_version');
+$jenisUsage = [];
+if ($usageRes = $conn->query("SELECT jenis_id, COUNT(*) c FROM reviu GROUP BY jenis_id")) {
+  while ($usageRow = $usageRes->fetch_assoc()) {
+    $jenisUsage[(int)$usageRow['jenis_id']] = (int)$usageRow['c'];
+  }
+  $usageRes->free();
+}
+foreach ($jenis as &$jenisRow) {
+  $mappedCode = trim((string)($jenisRow['template_code'] ?? ''));
+  if ($mappedCode === '') {
+    $mappedCode = review_template_code_from_name((string)($jenisRow['nama'] ?? ''));
+  }
+  $jenisRow['resolved_template_code'] = $mappedCode;
+  $jenisRow['resolved_template_name'] = $mappedCode !== '' && isset($templateOptions[$mappedCode]) ? $templateOptions[$mappedCode]['name'] : 'Belum Dipetakan';
+  $jenisRow['mapping_status'] = $mappedCode === '' ? 'Belum Dipetakan' : ($mappedCode === 'chr_legacy_laporan_keuangan' ? 'Legacy' : 'Terpetakan');
+  $jenisRow['usage_count'] = $jenisUsage[(int)$jenisRow['id']] ?? 0;
+}
+unset($jenisRow);
 $unitOptionLabels = [];
 $unitSlugMap = [];
 $unitCompactMap = [];
@@ -1224,6 +1390,7 @@ if (!is_ski_admin()) {
 }
 $sortableMap = [
   'kode'     => 'r.kode',
+  'kegiatan' => $hasReviewNamaKegiatan ? 'r.nama_kegiatan' : 'r.kode',
   'jenis'    => 'j.nama',
   'unit'     => 'u.nama',
   'periode'  => 'r.periode_mulai',
@@ -1249,7 +1416,9 @@ if ($sortCurrent !== 'created') {
 }
 $sortQueryBase = ['tab' => 'jadwal'];
 if ($q !== '') { $sortQueryBase['q'] = $q; }
-$sql="SELECT r.*, u.nama unit_nama, j.nama jenis_nama
+$templateSelect = $hasJenisTemplateCode ? ", j.template_code AS jenis_template_code" : ", NULL AS jenis_template_code";
+$templateSelect .= $hasReviewTemplateCode ? ", r.template_code AS review_template_code" : ", NULL AS review_template_code";
+$sql="SELECT r.*, u.nama unit_nama, j.nama jenis_nama {$templateSelect}
       FROM reviu r 
       JOIN unit_kerja u ON u.id=r.unit_id
       JOIN jenis_reviu j ON j.id=r.jenis_id
@@ -1695,12 +1864,31 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
       box-shadow:0 0 0 6px rgba(25,135,84,.12), 0 10px 24px rgba(25,135,84,.12);
       transition:box-shadow .25s ease, outline-color .25s ease;
     }
+    .review-create-modal .modal-content{border:1px solid #d6e9de;border-radius:16px;box-shadow:0 22px 60px rgba(5,42,28,.24);}
+    .review-create-modal .modal-header{background:#f7fbf8;border-bottom:1px solid #d6e9de;}
+    .review-create-modal .modal-title{color:#124b38;font-weight:800;}
+    .review-template-help{font-size:.78rem;color:#6b7280;margin-top:.25rem;}
+    .jenis-template-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(180px,.8fr) 110px minmax(180px,.9fr);gap:10px;align-items:center;padding:10px;border:1px solid #edf3ef;border-radius:10px;background:#fbfdfc;}
+    .review-action-cell{min-width:260px;}
+    .review-action-group{display:flex;align-items:center;justify-content:flex-end;gap:8px;white-space:nowrap;}
+    .review-action-group .btn{min-height:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+    .review-action-menu{min-width:210px;border:1px solid #dce9e1;border-radius:12px;box-shadow:0 16px 36px rgba(5,42,28,.16);padding:6px;}
+    .review-action-menu .dropdown-item{border-radius:8px;padding:8px 10px;font-size:.9rem;}
+    .review-action-menu .dropdown-item i{width:18px;text-align:center;}
+    .review-action-modal .modal-content{border:1px solid #d6e9de;border-radius:16px;box-shadow:0 22px 60px rgba(5,42,28,.24);}
+    .review-action-modal .modal-header{background:#f7fbf8;border-bottom:1px solid #d6e9de;}
+    .review-action-modal .modal-title{color:#124b38;font-weight:800;}
+    .review-status-note{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:260px;}
+    @media (max-width: 992px){.jenis-template-row{grid-template-columns:1fr;}}
     @media (max-width: 575.98px){
       .chr-signature-panel{padding:12px;}
       .chr-signature-actions{flex-direction:column;}
       .chr-signature-actions .btn{width:100%;}
       .chr-member-signature-list{grid-template-columns:1fr;}
       .chr-preview-frame{height:74vh;}
+      .review-action-cell{min-width:210px;}
+      .review-action-group{justify-content:flex-start;gap:6px;}
+      .review-action-group .btn:not(.dropdown-toggle){padding-left:8px;padding-right:8px;}
     }
     @media (max-width: 991.98px){
       .chr-member-signature-list{grid-template-columns:1fr;}
@@ -1808,18 +1996,57 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
           <h6 class="mb-2">Jenis Reviu</h6>
           <form method="post" class="row g-2 mb-2">
             <?= csrf_field(); ?><input type="hidden" name="action" value="jenis_create">
-            <div class="col-4"><input name="nama" class="form-control" placeholder="Nama jenis"></div>
-            <div class="col-6"><input name="deskripsi" class="form-control" placeholder="Deskripsi (opsional)"></div>
-            <div class="col-2"><button class="btn btn-success w-100">Tambah</button></div>
+            <div class="col-md-4"><input name="nama" class="form-control" placeholder="Nama jenis"></div>
+            <div class="col-md-4"><input name="deskripsi" class="form-control" placeholder="Deskripsi (opsional)"></div>
+            <div class="col-md-3">
+              <select name="template_code" class="form-select">
+                <option value="">Template opsional</option>
+                <?php foreach($templateOptions as $tpl){ ?>
+                  <option value="<?= e($tpl['code']) ?>"><?= e($tpl['name']) ?> (<?= e($tpl['code']) ?>)</option>
+                <?php } ?>
+              </select>
+            </div>
+            <div class="col-md-1"><button class="btn btn-success w-100">Tambah</button></div>
           </form>
-          <ul class="list-group">
-            <?php foreach($jenis as $j){ ?>
-              <li class="list-group-item"><?= e($j['nama']) ?></li>
+          <div class="d-grid gap-2">
+            <?php foreach($jenis as $j){
+              $mappedCode = (string)($j['resolved_template_code'] ?? '');
+              $status = (string)($j['mapping_status'] ?? 'Belum Dipetakan');
+              $badgeClass = $status === 'Terpetakan' ? 'bg-success' : ($status === 'Legacy' ? 'bg-secondary' : 'bg-warning text-dark');
+            ?>
+              <div class="jenis-template-row">
+                <div>
+                  <div class="fw-semibold"><?= e($j['nama']) ?></div>
+                  <?php if(trim((string)($j['deskripsi'] ?? '')) !== ''): ?><div class="small text-muted"><?= e($j['deskripsi']) ?></div><?php endif; ?>
+                  <div class="small text-muted"><?= number_format((int)($j['usage_count'] ?? 0)) ?> kegiatan memakai jenis ini</div>
+                </div>
+                <div>
+                  <div class="small text-muted">Template</div>
+                  <div class="fw-semibold"><?= $mappedCode !== '' ? e($j['resolved_template_name']) : 'Belum Dipetakan' ?></div>
+                  <code class="small"><?= $mappedCode !== '' ? e($mappedCode) : '-' ?></code>
+                </div>
+                <div><span class="badge <?= e($badgeClass) ?>"><?= e($status) ?></span></div>
+                <form method="post" class="d-flex gap-2 align-items-center">
+                  <?= csrf_field(); ?><input type="hidden" name="action" value="jenis_template_update">
+                  <input type="hidden" name="jenis_id" value="<?= (int)$j['id'] ?>">
+                  <select name="template_code" class="form-select form-select-sm" <?= (!$hasJenisTemplateCode || !$hasJenisTemplateVersion) ? 'disabled' : '' ?>>
+                    <option value="">Atur Template</option>
+                    <?php foreach($templateOptions as $tpl){ ?>
+                      <option value="<?= e($tpl['code']) ?>" <?= $mappedCode === $tpl['code'] ? 'selected' : '' ?>><?= e($tpl['code']) ?></option>
+                    <?php } ?>
+                  </select>
+                  <button class="btn btn-sm btn-outline-success" <?= (!$hasJenisTemplateCode || !$hasJenisTemplateVersion) ? 'disabled' : '' ?>>Simpan</button>
+                </form>
+              </div>
             <?php } ?>
-          </ul>
+          </div>
+          <?php if(!$hasJenisTemplateCode || !$hasJenisTemplateVersion): ?>
+            <div class="alert alert-warning mt-3 mb-0">Kolom pemetaan template belum tersedia. Jalankan migration <code>20260803_090111_review_template_mapping.sql</code> untuk mengaktifkan pemetaan jenis reviu.</div>
+          <?php endif; ?>
         </div>
       </div>
     </div>
+
   <?php } ?>
 
   <?php if($tab==='jadwal'){ ?>
@@ -1835,40 +2062,84 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
     </div>
 
     <?php if(in_array($role,['admin','super_admin','superadmin','moderator'])){ ?>
-    <div class="card-soft p-3 mb-3">
-      <h6 class="mb-2">Buat Jadwal Reviu</h6>
-      <form method="post" class="row g-2">
-        <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_create">
-        <div class="col-md-3">
-          <select name="jenis_id" class="form-select" required>
-            <option value="">Pilih Jenis</option>
-            <?php foreach($jenis as $j){ ?><option value="<?= (int)$j['id'] ?>"><?= e($j['nama']) ?></option><?php } ?>
-          </select>
-        </div>
-        <div class="col-md-3">
-          <select name="unit_id" class="form-select" id="unit-select" required>
-            <option value="">Pilih Unit</option>
-            <?php foreach($units as $u){ ?>
-              <option value="<?= (int)$u['id'] ?>"><?= e($u['nama']) ?></option>
-            <?php } ?>
-          </select>
-        </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted mb-1">Mulai Periode</label>
-          <input type="date" name="mulai" class="form-control" required>
-        </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted mb-1">Selesai Periode</label>
-          <input type="date" name="selesai" class="form-control" required>
-        </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted mb-1">Deadline</label>
-          <input type="date" name="deadline" class="form-control" required>
-        </div>
-        <div class="col-md-2"><button class="btn btn-success w-100">Simpan</button></div>
-      </form>
+    <div class="card-soft p-3 mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div>
+        <h6 class="mb-1">Buat Jadwal Reviu</h6>
+        <div class="text-muted small">Nama kegiatan dan jenis/template CHR dipisahkan agar dokumen CHR memakai format yang tepat.</div>
+      </div>
+      <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#reviewCreateModal">
+        <i class="bi bi-plus-lg me-1"></i>Buat Jadwal Reviu
+      </button>
     </div>
     <?php } ?>
+
+    <div class="modal fade review-create-modal" id="reviewCreateModal" tabindex="-1" aria-labelledby="reviewCreateModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+          <form method="post" id="reviewCreateForm" data-dirty-confirm="Data jadwal belum disimpan. Tutup form?">
+            <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_create">
+            <div class="modal-header">
+              <div>
+                <h5 class="modal-title" id="reviewCreateModalLabel">Buat Jadwal Reviu</h5>
+                <div class="text-muted small">Pisahkan judul kegiatan dari jenis reviu/template CHR.</div>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body">
+              <?php if(!$hasReviewNamaKegiatan || !$hasReviewTemplateCode || !$hasReviewTemplateVersion): ?>
+                <div class="alert alert-warning">Kolom nama kegiatan/template belum tersedia. Jalankan migration <code>20260803_090111_review_template_mapping.sql</code> sebelum membuat jadwal baru.</div>
+              <?php endif; ?>
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label">Nama/Judul Kegiatan Reviu <span class="text-danger">*</span></label>
+                  <input type="text" name="nama_kegiatan" class="form-control" placeholder="Contoh: Reviu Laporan Kinerja Semester I Tahun 2026" required data-review-create-focus>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Jenis Reviu / Template CHR <span class="text-danger">*</span></label>
+                  <select name="jenis_id" class="form-select" required id="reviewJenisSelect">
+                    <option value="">Pilih Jenis Reviu / Template</option>
+                    <?php foreach($jenis as $j){
+                      $resolvedCode = (string)($j['resolved_template_code'] ?? '');
+                      $templateName = (string)($j['resolved_template_name'] ?? 'Belum Dipetakan');
+                    ?>
+                      <option value="<?= (int)$j['id'] ?>" data-template-code="<?= e($resolvedCode) ?>" data-template-name="<?= e($templateName) ?>">
+                        <?= e($j['nama']) ?><?= $resolvedCode !== '' ? ' - '.e($resolvedCode) : ' - Belum Dipetakan' ?>
+                      </option>
+                    <?php } ?>
+                  </select>
+                  <div class="review-template-help" id="reviewTemplateHelp">Pilih jenis yang sudah terhubung ke template CHR.</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Unit Kerja <span class="text-danger">*</span></label>
+                  <select name="unit_id" class="form-select" id="unit-select" required>
+                    <option value="">Pilih Unit</option>
+                    <?php foreach($units as $u){ ?>
+                      <option value="<?= (int)$u['id'] ?>"><?= e($u['nama']) ?></option>
+                    <?php } ?>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Tanggal Mulai Reviu <span class="text-danger">*</span></label>
+                  <input type="date" name="mulai" class="form-control" required>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Tanggal Selesai Reviu <span class="text-danger">*</span></label>
+                  <input type="date" name="selesai" class="form-control" required>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Deadline <span class="text-danger">*</span></label>
+                  <input type="date" name="deadline" class="form-control" required>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+              <button type="submit" class="btn btn-success" <?= (!$hasReviewNamaKegiatan || !$hasReviewTemplateCode || !$hasReviewTemplateVersion) ? 'disabled' : '' ?>>Simpan Jadwal</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
 
     <div class="card-soft p-3">
       <div class="table-responsive">
@@ -1877,7 +2148,7 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
             <?php
               $sortColumns = [
                 'kode'     => 'Kode',
-                'jenis'    => 'Jenis',
+                'jenis'    => 'Kegiatan / Jenis',
                 'unit'     => 'Unit',
                 'periode'  => 'Periode',
                 'deadline' => 'Deadline',
@@ -1954,58 +2225,193 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
                     </small>
                   </div>
                 </td>
-                <td><?= e($r['jenis_nama']) ?></td>
+                <td>
+                  <div class="fw-semibold"><?= e($hasReviewNamaKegiatan && trim((string)($r['nama_kegiatan'] ?? '')) !== '' ? $r['nama_kegiatan'] : $r['jenis_nama']) ?></div>
+                  <div class="small text-muted">Jenis: <?= e($r['jenis_nama']) ?></div>
+                  <?php
+                    $rowTemplateCode = trim((string)($r['review_template_code'] ?? ''));
+                    if ($rowTemplateCode === '') { $rowTemplateCode = trim((string)($r['jenis_template_code'] ?? '')); }
+                    if ($rowTemplateCode === '') { $rowTemplateCode = review_template_code_from_name((string)$r['jenis_nama']); }
+                  ?>
+                  <div class="small text-muted">Template: <?= $rowTemplateCode !== '' ? e($rowTemplateCode) : 'Belum dipetakan' ?></div>
+                </td>
                 <td><?= e($r['unit_nama']) ?></td>
                 <td><?= e($r['periode_mulai']) ?> &rarr; <?= e($r['periode_selesai']) ?></td>
                 <td>
                   <span class="badge badge-ew" style="background: <?= e($ewColor) ?>; color:#fff"><?= e($r['tgl_deadline']).' &middot; '.$ewName ?></span>
                   <?php if($ewDesc !== ''): ?><div class="small text-muted"><?= e($ewDesc) ?></div><?php endif; ?>
                 </td>
-                <td><span class="badge bg-<?= $cls ?>"><?= e($r['status']) ?></span></td>
-                <?php if(trim((string)($r['catatan'] ?? '')) !== ''): ?>
-                  <div class="small text-muted mt-1"><?= e($r['catatan']) ?></div>
-                <?php endif; ?>
-                <td class="d-flex flex-wrap gap-1">
-                  <?php if(in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role)){ ?>
-                    <?php if($canAdvanceStatus){ ?>
+                <td>
+                  <span class="badge bg-<?= $cls ?>"><?= e($r['status']) ?></span>
+                  <?php if(trim((string)($r['catatan'] ?? '')) !== ''): ?>
+                    <div class="small text-muted mt-1 review-status-note" title="<?= e($r['catatan']) ?>"><?= e($r['catatan']) ?></div>
+                  <?php endif; ?>
+                </td>
+                <td class="review-action-cell">
+                  <div class="review-action-group">
+                    <a class="btn btn-sm btn-success" href="<?= e(review_url('asg', ['rid' => (int)$r['id']])) ?>">
+                      <i class="bi bi-folder2-open"></i><span>Buka</span>
+                    </a>
+                    <?php if((in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role)) && $canAdvanceStatus){ ?>
                       <form method="post" class="d-inline">
                         <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_step">
                         <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                         <input type="hidden" name="to" value="<?= $r['status']==='Terjadwal'?'Pelaksanaan':($r['status']==='Pelaksanaan'?'CHR':'Rekomendasi') ?>">
-                        <button class="btn btn-sm btn-outline-primary">Majukan</button>
+                        <button class="btn btn-sm btn-outline-primary" title="Melanjutkan kegiatan ke tahap berikutnya">
+                          <i class="bi bi-arrow-right-circle"></i><span>Majukan Tahap</span>
+                        </button>
                       </form>
                     <?php } ?>
-                    <form method="post" class="d-flex flex-wrap gap-1 align-items-center">
-                      <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_deadline_update">
-                      <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                      <input type="date" name="deadline" class="form-control form-control-sm" value="<?= e($r['tgl_deadline']) ?>" style="width:auto" required>
-                      <button class="btn btn-sm btn-outline-warning text-dark">Set Deadline</button>
-                    </form>
-                    <form method="post" class="d-flex flex-wrap gap-1 align-items-center">
-                      <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_status_update">
-                      <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                      <select name="status" class="form-select form-select-sm" style="width:auto">
-                        <?php foreach(['Selesai','Tidak Selesai'] as $finalStatus){ ?>
-                          <option value="<?= e($finalStatus) ?>" <?= ($r['status'] === $finalStatus) ? 'selected' : '' ?>><?= e($finalStatus) ?></option>
-                        <?php } ?>
-                      </select>
-                      <input type="text" name="catatan" class="form-control form-control-sm" style="width:220px" placeholder="Catatan status" value="<?= e($r['catatan'] ?? '') ?>">
-                      <button class="btn btn-sm btn-outline-dark">Set Status</button>
-                    </form>
-                  <?php } ?>
-                  <?php if(in_array($role,['admin','super_admin','superadmin','moderator'], true)){ ?>
-                    <form method="post" class="d-inline" onsubmit="return confirm('Hapus jadwal reviu ini beserta seluruh lampiran?');">
-                      <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_delete">
-                      <input type="hidden" name="reviu_id" value="<?= (int)$r['id'] ?>">
-                      <button class="btn btn-sm btn-outline-danger">Hapus</button>
-                    </form>
-                  <?php } ?>
-                  <a class="btn btn-sm btn-outline-success" href="<?= e(review_url('asg', ['rid' => (int)$r['id']])) ?>">Buka</a>
+                    <?php
+                      $canManageSchedule = in_array($role,['admin','super_admin','superadmin'], true) || is_auditor($role);
+                      $canDeleteSchedule = in_array($role,['admin','super_admin','superadmin','moderator'], true);
+                      $rowTitle = $hasReviewNamaKegiatan && trim((string)($r['nama_kegiatan'] ?? '')) !== '' ? (string)$r['nama_kegiatan'] : (string)$r['jenis_nama'];
+                    ?>
+                    <?php if($canManageSchedule || $canDeleteSchedule){ ?>
+                      <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Menu aksi lainnya">
+                          <i class="bi bi-three-dots-vertical"></i><span class="visually-hidden">Lainnya</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end review-action-menu">
+                          <?php if($canManageSchedule){ ?>
+                            <li>
+                              <button type="button" class="dropdown-item" data-review-deadline-open
+                                data-id="<?= (int)$r['id'] ?>"
+                                data-code="<?= e($r['kode']) ?>"
+                                data-name="<?= e($rowTitle) ?>"
+                                data-deadline="<?= e($r['tgl_deadline']) ?>"
+                                data-deadline-info="<?= e($ewDesc !== '' ? $ewDesc : ($r['tgl_deadline'].' - '.$ewName)) ?>">
+                                <i class="bi bi-calendar-event"></i>Atur Deadline
+                              </button>
+                            </li>
+                            <li>
+                              <button type="button" class="dropdown-item" data-review-note-open
+                                data-id="<?= (int)$r['id'] ?>"
+                                data-code="<?= e($r['kode']) ?>"
+                                data-name="<?= e($rowTitle) ?>"
+                                data-status="<?= e($r['status']) ?>"
+                                data-note="<?= e($r['catatan'] ?? '') ?>">
+                                <i class="bi bi-chat-left-text"></i>Atur Catatan Status
+                              </button>
+                            </li>
+                          <?php } ?>
+                          <?php if($canDeleteSchedule){ ?>
+                            <?php if($canManageSchedule){ ?><li><hr class="dropdown-divider"></li><?php } ?>
+                            <li>
+                              <button type="button" class="dropdown-item text-danger" data-review-delete-open
+                                data-id="<?= (int)$r['id'] ?>"
+                                data-code="<?= e($r['kode']) ?>"
+                                data-title="<?= e($rowTitle) ?>">
+                                <i class="bi bi-trash3"></i>Hapus
+                              </button>
+                            </li>
+                          <?php } ?>
+                        </ul>
+                      </div>
+                    <?php } ?>
+                  </div>
                 </td>
               </tr>
             <?php } } ?>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="modal fade review-action-modal" id="reviewDeadlineModal" tabindex="-1" aria-labelledby="reviewDeadlineModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <form method="post" data-review-action-form>
+            <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_deadline_update">
+            <input type="hidden" name="id" value="">
+            <div class="modal-header">
+              <div>
+                <h5 class="modal-title" id="reviewDeadlineModalLabel">Atur Deadline</h5>
+                <div class="text-muted small" data-review-deadline-code></div>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body">
+              <p class="text-muted small mb-3">Ubah batas waktu penyelesaian kegiatan reviu.</p>
+              <div class="border rounded-3 p-3 bg-light mb-3">
+                <div class="fw-semibold" data-review-deadline-title>-</div>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Deadline saat ini</label>
+                <input type="date" name="deadline" class="form-control" required>
+              </div>
+              <div class="alert alert-light border mb-0 small" data-review-deadline-info></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+              <button type="submit" class="btn btn-success">Simpan Deadline</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade review-action-modal" id="reviewNoteModal" tabindex="-1" aria-labelledby="reviewNoteModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <form method="post" data-review-action-form>
+            <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_note_update">
+            <input type="hidden" name="id" value="">
+            <div class="modal-header">
+              <div>
+                <h5 class="modal-title" id="reviewNoteModalLabel">Atur Catatan Status</h5>
+                <div class="text-muted small" data-review-note-code></div>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body">
+              <p class="text-muted small mb-3">Catatan ini tidak mengubah status atau tahap kegiatan.</p>
+              <div class="border rounded-3 p-3 bg-light mb-3">
+                <div class="fw-semibold" data-review-note-title>-</div>
+                <div class="small text-muted mt-1">Status/tahap saat ini: <span class="fw-semibold" data-review-note-status>-</span></div>
+              </div>
+              <div class="mb-0">
+                <label class="form-label">Catatan kondisi kegiatan</label>
+                <textarea name="catatan" class="form-control" rows="4" maxlength="5000" placeholder="Contoh: Menunggu dokumen tambahan dari unit kerja."></textarea>
+                <div class="form-text">Kosongkan lalu simpan untuk menghapus catatan dari tabel.</div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+              <button type="submit" class="btn btn-success">Simpan Catatan</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade review-action-modal" id="reviewDeleteModal" tabindex="-1" aria-labelledby="reviewDeleteModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <form method="post" data-review-action-form>
+            <?= csrf_field(); ?><input type="hidden" name="action" value="reviu_delete">
+            <input type="hidden" name="reviu_id" value="">
+            <div class="modal-header">
+              <div>
+                <h5 class="modal-title text-danger" id="reviewDeleteModalLabel">Hapus Jadwal Reviu</h5>
+                <div class="text-muted small" data-review-delete-code></div>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body">
+              <p class="text-muted small mb-3">Hapus jadwal reviu sesuai hak akses dan aturan sistem.</p>
+              <p class="mb-2">Jadwal berikut akan dihapus:</p>
+              <div class="border rounded-3 p-3 bg-light">
+                <div class="fw-semibold" data-review-delete-title>-</div>
+              </div>
+              <p class="text-muted small mt-3 mb-0">Tindakan ini mengikuti aturan hapus yang sudah ada dan akan menghapus data jadwal beserta lampiran terkait.</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+              <button type="submit" class="btn btn-danger">Ya, Hapus</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   <?php } ?>
@@ -2145,7 +2551,10 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
         </div>
       </div>
     <?php } else { ?>
-      <div class="alert alert-info">Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode untuk mengelola <b>Penugasan</b>.</div>
+      <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <span>Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode reviu terlebih dahulu untuk mengelola <b>Penugasan</b>.</span>
+        <a class="btn btn-sm btn-outline-primary" href="<?= e(review_url('jadwal')) ?>">Buka Daftar Jadwal</a>
+      </div>
     <?php } ?>
   <?php } ?>
 
@@ -2302,7 +2711,10 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
       </div>
 
     <?php } else { ?>
-      <div class="alert alert-info">Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode untuk mengelola <b>Dokumen</b>.</div>
+      <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <span>Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode reviu terlebih dahulu untuk mengelola <b>Dokumen</b>.</span>
+        <a class="btn btn-sm btn-outline-primary" href="<?= e(review_url('jadwal')) ?>">Buka Daftar Jadwal</a>
+      </div>
     <?php } ?>
   <?php } ?>
 
@@ -2822,7 +3234,10 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
       </div>
       <?php endif; ?>
     <?php } else { ?>
-      <div class="alert alert-info">Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode untuk mengelola <b>CHR</b>.</div>
+      <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <span>Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode reviu terlebih dahulu untuk mengelola <b>CHR</b>.</span>
+        <a class="btn btn-sm btn-outline-primary" href="<?= e(review_url('jadwal')) ?>">Buka Daftar Jadwal</a>
+      </div>
     <?php } ?>
   <?php } ?>
 
@@ -2868,8 +3283,8 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
               <textarea class="form-control" name="tindak_lanjut" rows="3" placeholder="Status tindak lanjut"><?= e($laporanData['tindak_lanjut'] ?? '') ?></textarea>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Nama Kepala SKI</label>
-              <input class="form-control" name="ttd_kepala_nama" placeholder="Nama lengkap Kepala SKI" value="<?= e($laporanData['ttd_kepala_nama'] ?? '') ?>">
+              <label class="form-label">Nama Ka SKI</label>
+              <input class="form-control" name="ttd_kepala_nama" placeholder="Nama lengkap Ka SKI" value="<?= e($laporanData['ttd_kepala_nama'] ?? '') ?>">
             </div>
             <div class="col-md-3">
               <label class="form-label">Tanggal TTD</label>
@@ -2930,7 +3345,7 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
                 <dd class="col-sm-9"><?= nl2br(e($laporanData['tindak_lanjut'])) ?></dd>
               <?php } ?>
               <?php if(!empty($laporanData['ttd_kepala_nama']) || !empty($laporanData['ttd_kepala_tanggal'])){ ?>
-                <dt class="col-sm-3">Kepala SKI</dt>
+                <dt class="col-sm-3">Ka SKI</dt>
                 <dd class="col-sm-9">
                   <?= e($laporanData['ttd_kepala_nama'] ?? '-') ?><br>
                   <?php if(!empty($laporanData['ttd_kepala_tanggal'])){ ?><small class="text-muted">TTD: <?= e($laporanData['ttd_kepala_tanggal']) ?></small><?php } ?>
@@ -2948,7 +3363,7 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
           <h6 class="mb-2">Riwayat Laporan Akhir</h6>
           <div class="table-responsive">
             <table class="table align-middle">
-              <thead><tr><th>#</th><th>Ringkasan</th><th>Kepala SKI</th><th>Dibuat</th><th>Diperbarui</th><th class="text-end">Aksi</th></tr></thead>
+              <thead><tr><th>#</th><th>Ringkasan</th><th>Ka SKI</th><th>Dibuat</th><th>Diperbarui</th><th class="text-end">Aksi</th></tr></thead>
               <tbody>
                 <?php foreach($laporanRows as $i=>$row){ ?>
                   <?php
@@ -3089,7 +3504,10 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
       </div>
       <?php endif; ?>
     <?php } else { ?>
-      <div class="alert alert-info">Pilih jadwal dari tab <b>Jadwal</b> untuk mengelola <b>Verifikasi/TTD</b>.</div>
+      <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <span>Pilih jadwal dari tab <b>Jadwal</b> lalu klik kode reviu terlebih dahulu untuk mengelola <b>Verifikasi/TTD</b>.</span>
+        <a class="btn btn-sm btn-outline-primary" href="<?= e(review_url('jadwal')) ?>">Buka Daftar Jadwal</a>
+      </div>
     <?php } ?>
   <?php } ?>
 
@@ -3643,6 +4061,128 @@ $chrPendingSignatureTasks = chr_sop_pending_signature_tasks($conn, (int)($_SESSI
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function(){
+  if (!window.bootstrap) { return; }
+  function setText(selector, value) {
+    var el = document.querySelector(selector);
+    if (el) { el.textContent = value || '-'; }
+  }
+  function showModal(id) {
+    var el = document.getElementById(id);
+    if (!el) { return null; }
+    var modal = bootstrap.Modal.getOrCreateInstance(el);
+    modal.show();
+    return el;
+  }
+  function setField(form, selector, value) {
+    var field = form ? form.querySelector(selector) : null;
+    if (field) { field.value = value || ''; }
+  }
+  document.addEventListener('click', function(event) {
+    var deadlineBtn = event.target.closest('[data-review-deadline-open]');
+    if (deadlineBtn) {
+      var deadlineModalEl = showModal('reviewDeadlineModal');
+      if (!deadlineModalEl) { return; }
+      var deadlineForm = deadlineModalEl.querySelector('form');
+      setField(deadlineForm, 'input[name="id"]', deadlineBtn.getAttribute('data-id') || '');
+      setField(deadlineForm, 'input[name="deadline"]', deadlineBtn.getAttribute('data-deadline') || '');
+      setText('#reviewDeadlineModal [data-review-deadline-code]', deadlineBtn.getAttribute('data-code') || '');
+      setText('#reviewDeadlineModal [data-review-deadline-title]', deadlineBtn.getAttribute('data-name') || '-');
+      setText('#reviewDeadlineModal [data-review-deadline-info]', deadlineBtn.getAttribute('data-deadline-info') || 'Informasi deadline belum tersedia.');
+      return;
+    }
+    var noteBtn = event.target.closest('[data-review-note-open]');
+    if (noteBtn) {
+      var noteModalEl = showModal('reviewNoteModal');
+      if (!noteModalEl) { return; }
+      var noteForm = noteModalEl.querySelector('form');
+      setField(noteForm, 'input[name="id"]', noteBtn.getAttribute('data-id') || '');
+      setField(noteForm, 'textarea[name="catatan"]', noteBtn.getAttribute('data-note') || '');
+      setText('#reviewNoteModal [data-review-note-code]', noteBtn.getAttribute('data-code') || '');
+      setText('#reviewNoteModal [data-review-note-title]', noteBtn.getAttribute('data-name') || '-');
+      setText('#reviewNoteModal [data-review-note-status]', noteBtn.getAttribute('data-status') || '-');
+      return;
+    }
+    var deleteBtn = event.target.closest('[data-review-delete-open]');
+    if (deleteBtn) {
+      var deleteModalEl = showModal('reviewDeleteModal');
+      if (!deleteModalEl) { return; }
+      var deleteForm = deleteModalEl.querySelector('form');
+      setField(deleteForm, 'input[name="reviu_id"]', deleteBtn.getAttribute('data-id') || '');
+      setText('#reviewDeleteModal [data-review-delete-code]', deleteBtn.getAttribute('data-code') || '');
+      setText('#reviewDeleteModal [data-review-delete-title]', deleteBtn.getAttribute('data-title') || '-');
+    }
+  });
+  document.querySelectorAll('[data-review-action-form]').forEach(function(form) {
+    form.addEventListener('submit', function() {
+      var submit = form.querySelector('button[type="submit"]');
+      if (submit) {
+        submit.disabled = true;
+        submit.dataset.originalText = submit.textContent;
+        submit.textContent = 'Menyimpan...';
+      }
+    });
+  });
+})();
+(function(){
+  var modalEl = document.getElementById('reviewCreateModal');
+  var form = document.getElementById('reviewCreateForm');
+  if (!modalEl || !form || !window.bootstrap) { return; }
+  var opener = document.querySelector('[data-bs-target="#reviewCreateModal"]');
+  var dirty = false;
+  var allowClose = false;
+  var jenisSelect = document.getElementById('reviewJenisSelect');
+  var help = document.getElementById('reviewTemplateHelp');
+  var mulai = form.querySelector('[name="mulai"]');
+  var selesai = form.querySelector('[name="selesai"]');
+
+  form.addEventListener('input', function(){ dirty = true; });
+  form.addEventListener('change', function(){ dirty = true; updateTemplateHelp(); });
+  form.addEventListener('submit', function(event){
+    if (mulai && selesai && mulai.value && selesai.value && mulai.value > selesai.value) {
+      event.preventDefault();
+      alert('Tanggal mulai tidak boleh melebihi tanggal selesai.');
+      mulai.focus();
+      return;
+    }
+    allowClose = true;
+  });
+
+  function updateTemplateHelp() {
+    if (!jenisSelect || !help) { return; }
+    var opt = jenisSelect.options[jenisSelect.selectedIndex];
+    var code = opt ? (opt.getAttribute('data-template-code') || '') : '';
+    var name = opt ? (opt.getAttribute('data-template-name') || '') : '';
+    if (!jenisSelect.value) {
+      help.textContent = 'Pilih jenis yang sudah terhubung ke template CHR.';
+    } else if (code) {
+      help.textContent = 'Template aktif: ' + code + (name ? ' - ' + name : '');
+    } else {
+      help.textContent = 'Jenis ini belum dipetakan ke template CHR dan tidak bisa disimpan.';
+    }
+  }
+
+  modalEl.addEventListener('show.bs.modal', function(){ allowClose = false; });
+  modalEl.addEventListener('shown.bs.modal', function(){
+    var focusEl = form.querySelector('[data-review-create-focus]');
+    if (focusEl) { focusEl.focus(); }
+    updateTemplateHelp();
+  });
+  modalEl.addEventListener('hide.bs.modal', function(event){
+    if (!allowClose && dirty && !confirm(form.getAttribute('data-dirty-confirm') || 'Tutup form tanpa menyimpan?')) {
+      event.preventDefault();
+    }
+  });
+  modalEl.addEventListener('hidden.bs.modal', function(){
+    dirty = false;
+    allowClose = false;
+    form.reset();
+    updateTemplateHelp();
+    if (opener) { opener.focus(); }
+  });
+})();
+</script>
 <script>
 (function(){
   function targetFromHash() {

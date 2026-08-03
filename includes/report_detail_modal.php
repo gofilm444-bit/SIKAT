@@ -36,9 +36,10 @@ $reportDetailEndpoint = function_exists('endpoint_url') ? endpoint_url('report_d
             <div class="report-detail-title" data-report-field="judul" hidden></div>
             <div class="report-detail-text" data-report-field="isi">-</div>
           </article>
-          <article class="report-detail-panel">
+          <article class="report-detail-panel" id="reportDetailAttachmentsSection">
             <h3>Lampiran</h3>
             <div data-report-attachments></div>
+            <div class="report-attachment-preview" data-report-attachment-preview hidden></div>
           </article>
           <article class="report-detail-panel" id="reportDetailHistorySection">
             <h3>Riwayat Proses</h3>

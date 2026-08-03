@@ -184,7 +184,7 @@ function ex_cell($value): string {
         </tr>
       </table>
 
-      <h3>Kepala SKI</h3>
+      <h3>Ka SKI</h3>
       <table>
         <tr>
           <th>Nama</th>
@@ -215,7 +215,7 @@ function ex_cell($value): string {
         ?>
         <?php if ($sigData !== ''): ?>
           <div class="sig-box">
-            <img src="<?= $sigData ?>" alt="Tanda tangan Kepala SKI">
+            <img src="<?= $sigData ?>" alt="Tanda tangan Ka SKI">
           </div>
         <?php else: ?>
           <p class="note">Berkas tanda tangan tidak tersedia atau tidak dapat dibaca.</p>

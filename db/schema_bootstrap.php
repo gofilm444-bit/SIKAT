@@ -285,6 +285,8 @@ if (!db_table_exists($conn, 'jenis_reviu')) {
         id INT AUTO_INCREMENT PRIMARY KEY,
         nama VARCHAR(191) NOT NULL,
         deskripsi TEXT NULL,
+        template_code VARCHAR(100) NULL,
+        template_version INT NOT NULL DEFAULT 1,
         aktif TINYINT(1) NOT NULL DEFAULT 1,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -332,11 +334,14 @@ if (!db_table_exists($conn, 'reviu')) {
     db_exec($conn, "CREATE TABLE reviu (
         id INT AUTO_INCREMENT PRIMARY KEY,
         kode VARCHAR(50) NOT NULL UNIQUE,
+        nama_kegiatan VARCHAR(255) NULL,
         jenis_id INT NOT NULL,
         unit_id INT NOT NULL,
         periode_mulai DATE NOT NULL,
         periode_selesai DATE NOT NULL,
         tgl_deadline DATE NOT NULL,
+        template_code VARCHAR(100) NULL,
+        template_version INT NOT NULL DEFAULT 1,
         status VARCHAR(50) NOT NULL DEFAULT 'Terjadwal',
         created_by INT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
