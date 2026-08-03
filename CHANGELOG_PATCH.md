@@ -3671,3 +3671,46 @@ Tidak ada perubahan database
 * [ ] Tampilan mobile rapi
 * [ ] Tidak ada fatal error
 * [ ] Tidak ada perubahan database
+## 2026-08-03 11:58:29 - Ringkas tabel pelaporan tanpa scroll horizontal
+
+### File Diubah
+
+* pelaporan.php
+* CHANGELOG_PATCH.md
+
+### Ringkasan Perubahan
+
+* Menghapus min-width besar pada tabel Pelaporan dan menggunakan table-layout fixed agar kolom muat di area konten.
+* Menjadikan kode laporan sebagai tombol/link utama untuk membuka detail laporan.
+* Menghapus tombol Detail yang duplikatif dari kolom Aksi.
+* Mempersempit kolom Kategori & Isi serta mempertahankan ringkasan isi maksimal 2 baris.
+* Menyusun tombol aksi utama secara vertikal dan memindahkan aksi sekunder ke menu tiga titik.
+
+### Dampak
+
+* Tabel Pelaporan lebih ringkas dan kolom Aksi tidak mudah terpotong pada desktop.
+* Detail laporan tetap dapat dibuka melalui klik kode laporan.
+* Riwayat, lampiran, catatan TL, hapus, status, dan workflow tetap memakai fungsi lama.
+* Tidak mengubah database, export, hak akses, CSRF, sidebar, atau endpoint backend.
+
+### Kebutuhan Database
+
+Tidak ada perubahan database
+
+### Checklist Pengujian
+
+* [ ] Tabel Pelaporan tampil tanpa scroll horizontal pada desktop normal
+* [ ] Kode laporan membuka detail laporan
+* [ ] Tombol Detail tidak tampil lagi di kolom Aksi
+* [ ] Lihat Isi Lengkap tetap membuka modal isi laporan
+* [ ] Lihat lampiran tetap membuka modal lampiran
+* [ ] Tombol aksi utama tersusun vertikal
+* [ ] Menu tiga titik menampilkan Riwayat, aksi tambahan, dan Hapus sesuai hak akses
+* [ ] Teruskan ke Ka SKI tetap berjalan
+* [ ] Mulai Monitoring TL tetap berjalan
+* [ ] Hapus Laporan tetap memakai modal konfirmasi
+* [ ] Filter, Reset, Export CSV, dan Export Excel tetap normal
+* [ ] Tampilan desktop rapi
+* [ ] Tampilan tablet/mobile tetap rapi
+* [ ] Tidak ada fatal error
+* [ ] Tidak ada perubahan database

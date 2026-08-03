@@ -1896,24 +1896,25 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
     .mini-stat small{display:block;color:#6b7280;font-size:.78rem;}
 
-    .pelaporan-table{ min-width:1180px; }
-    .pelaporan-table th{ white-space:nowrap; font-size:.82rem; color:#244235; }
-    .pelaporan-table td{ vertical-align:top; }
-    .pelaporan-code{ display:inline-flex; align-items:center; min-width:112px; justify-content:center; font-weight:700; letter-spacing:.01em; }
-    .pelaporan-summary{ max-width:520px; min-width:280px; }
+    .pelaporan-table{ width:100%; table-layout:fixed; }
+    .pelaporan-table th{ white-space:normal; font-size:.8rem; color:#244235; line-height:1.25; }
+    .pelaporan-table td{ vertical-align:top; padding:.65rem .55rem; }
+    .pelaporan-code{ display:inline-flex; align-items:center; width:100%; max-width:118px; justify-content:center; font-weight:700; letter-spacing:.01em; border:1px solid var(--border); cursor:pointer; text-decoration:none; white-space:normal; line-height:1.2; text-align:center; }
+    .pelaporan-summary{ max-width:280px; min-width:0; }
     .pelaporan-summary__category{ font-weight:700; color:#0f5132; margin-bottom:.2rem; }
     .pelaporan-summary__text{ color:#344054; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.45; }
     .tl-note-clamp{ color:#667085; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; word-break:normal; overflow-wrap:anywhere; }
-    .pelaporan-row-actions{ display:flex; align-items:center; justify-content:flex-end; gap:.45rem; white-space:nowrap; }
-    .pelaporan-row-actions .btn{ min-height:32px; }
+    .pelaporan-status-desc{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.35; }
+    .pelaporan-row-actions{ display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:.4rem; min-width:0; }
+    .pelaporan-row-actions .btn{ min-height:32px; white-space:normal; line-height:1.2; padding:.35rem .5rem; }
     .pelaporan-meta-muted{ color:#667085; font-size:.78rem; }
-    .pelaporan-warning-cell{ min-width:170px; }
-    .pelaporan-tl-cell{ min-width:190px; }
-    .pelaporan-action-menu .dropdown-item{ font-size:.88rem; }
+    .pelaporan-warning-cell{ min-width:0; }
+    .pelaporan-tl-cell{ min-width:0; }
+    .pelaporan-action-menu .dropdown-item{ font-size:.88rem; white-space:normal; }
     .pelaporan-action-menu .dropdown-item.text-danger:hover{ background:#fff1f2; color:#b42318; }
 
     @media (max-width: 767.98px){
-      .pelaporan-row-actions{ justify-content:flex-start; flex-wrap:wrap; }
+      .pelaporan-row-actions{ justify-content:flex-start; }
       .pelaporan-summary{ max-width:none; }
     }
 
@@ -2111,23 +2112,23 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
           <tr>
 
-            <th style="width:140px">Kode</th>
+            <th style="width:125px">Kode</th>
 
-            <th>Kategori &amp; Isi</th>
+            <th style="width:260px">Kategori &amp; Isi</th>
 
-            <th style="width:150px">Dibuat</th>
+            <th style="width:100px">Dibuat</th>
 
-            <th style="width:170px">Status</th>
+            <th style="width:145px">Status</th>
 
             <?php if($showTlColumns): ?>
 
-              <th style="width:190px">Early Warning</th>
+              <th style="width:135px">Early Warning</th>
 
-              <th style="width:220px">Status TL</th>
+              <th style="width:165px">Status TL</th>
 
             <?php endif; ?>
 
-            <th style="width:220px" class="text-end">Aksi</th>
+            <th style="width:150px" class="text-center">Aksi</th>
 
           </tr>
 
@@ -2167,7 +2168,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
               <tr>
 
-                <td><span class="badge badge-soft pelaporan-code"><?= e($r['kode']) ?></span></td>
+                <td><button type="button" class="badge badge-soft pelaporan-code js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>" title="Lihat detail laporan" aria-label="Lihat detail laporan <?= e((string)$r['kode']) ?>"><?= e($r['kode']) ?></button></td>
 
                 <td>
                   <div class="pelaporan-summary">
@@ -2195,7 +2196,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                   <?php if(!empty($r['status_desc'])): ?>
 
-                    <div class="small text-muted mt-1"><?= e($r['status_desc']) ?></div>
+                    <div class="small text-muted mt-1 pelaporan-status-desc"><?= e($r['status_desc']) ?></div>
 
                   <?php endif; ?>
 
@@ -2301,8 +2302,6 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
 
                 <td>
                   <div class="pelaporan-row-actions">
-                    <button type="button" class="btn btn-sm btn-outline-success js-report-detail" data-report-code="<?= e((string)$r['kode']) ?>"><i class="bi bi-eye me-1"></i>Detail</button>
-
                     <?php if($primaryAction): ?>
                       <button type="button" class="btn btn-sm btn-primary js-pelaporan-status-modal"
                         data-kode="<?= e((string)$r['kode']) ?>"
@@ -2316,7 +2315,7 @@ $showTlColumns = in_array($actor, ['direktur','admin'], true);
                     <?php endif; ?>
 
                     <div class="dropdown pelaporan-action-menu">
-                      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Lainnya</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Aksi lainnya" aria-label="Aksi lainnya"><i class="bi bi-three-dots-vertical"></i></button>
                       <ul class="dropdown-menu dropdown-menu-end">
                         <li><button type="button" class="dropdown-item js-report-history" data-report-code="<?= e((string)$r['kode']) ?>" data-report-focus="history"><i class="bi bi-clock-history me-2"></i>Lihat Riwayat</button></li>
                         <?php foreach($secondaryActions as $act): ?>
